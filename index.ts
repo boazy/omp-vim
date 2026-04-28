@@ -56,7 +56,6 @@ const SOFTWARE_CURSOR_START = "\x1b[7m";
 const SOFTWARE_CURSOR_RESETS = ["\x1b[0m", "\x1b[27m"] as const;
 const INSERT_CURSOR_SHAPE = "\x1b[5 q";
 const BLOCK_CURSOR_SHAPE = "\x1b[1 q";
-// eslint-disable-next-line @typescript-eslint/no-unused-vars -- used by lifecycle cleanup in a later batch.
 const RESET_CURSOR_SHAPE = "\x1b[0 q";
 // Pi emits OSC52 before its native clipboard fallback. Give that 5s fallback
 // a small grace so the parent does not kill the helper and discard stdout.
@@ -105,6 +104,8 @@ type CursorShapeRuntime = {
   getShowHardwareCursor?: () => boolean | undefined;
 };
 
+type CursorShapeCleanup = () => void;
+
 type CursorShapeTuiCandidate = {
   terminal?: { write?: unknown };
   setShowHardwareCursor?: unknown;
@@ -142,6 +143,21 @@ function getCursorShapeRuntime(tui: unknown): CursorShapeRuntime | null {
   }
 
   return runtime;
+}
+
+function enableCursorShapeSupport(tui: unknown): CursorShapeCleanup | null {
+  const runtime = getCursorShapeRuntime(tui);
+  if (!runtime) return null;
+
+  const previousShowHardwareCursor = runtime.getShowHardwareCursor?.();
+  runtime.setShowHardwareCursor(true);
+
+  return () => {
+    runtime.writeCursorShape(RESET_CURSOR_SHAPE);
+    if (previousShowHardwareCursor !== undefined) {
+      runtime.setShowHardwareCursor(previousShowHardwareCursor);
+    }
+  };
 }
 
 function findSoftwareCursorReset(
@@ -3025,6 +3041,8 @@ export class ModalEditor extends CustomEditor {
 }
 
 export default function (pi: ExtensionAPI) {
+  let cursorShapeCleanup: CursorShapeCleanup | null = null;
+
   pi.on("session_start", (_event, ctx) => {
     const t = ctx.ui.theme;
     const reverseVideo = (s: string) => `\x1b[7m${s}\x1b[27m`;
@@ -3034,10 +3052,19 @@ export default function (pi: ExtensionAPI) {
       ex: (s: string) => t.fg("warning", reverseVideo(s)),
     } : null;
     ctx.ui.setEditorComponent((tui, theme, kb) => {
+      cursorShapeCleanup = enableCursorShapeSupport(tui);
       const editor = new ModalEditor(tui, theme, kb, colorizers);
       editor.setQuitFn(() => ctx.shutdown());
       editor.setNotifyFn((message) => ctx.ui.notify(message, "warning"));
       return editor;
     });
+  });
+
+  pi.on("session_shutdown", () => {
+    try {
+      cursorShapeCleanup?.();
+    } finally {
+      cursorShapeCleanup = null;
+    }
   });
 }

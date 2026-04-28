@@ -13,10 +13,11 @@ import assert from "node:assert/strict";
 import { CURSOR_MARKER, visibleWidth } from "@mariozechner/pi-tui";
 import type { WordMotionClass } from "../motions.js";
 import type { WordMotionDirection, WordMotionTarget } from "../word-boundary-cache.js";
-import { ModalEditor } from "../index.js";
+import installPiVim, { ModalEditor } from "../index.js";
 import {
   createCursorShapeTui,
   createEditorWithSpy,
+  createExtensionApiHarness,
   createMultiLineEditor,
   sendKeys,
   stubKeybindings,
@@ -59,6 +60,12 @@ type ModalEditorTestInternals = {
 
 type FindWordTargetInTextArgs = Parameters<ModalEditorTestInternals["findWordTargetInText"]>;
 type TryFindTargetArgs = Parameters<ModalEditorWordBoundaryCacheInternals["tryFindTarget"]>;
+
+type EditorFactory = (
+  tui: ConstructorParameters<typeof ModalEditor>[0],
+  theme: ConstructorParameters<typeof ModalEditor>[1],
+  keybindings: ConstructorParameters<typeof ModalEditor>[2],
+) => ModalEditor;
 
 function getRawEditor(editor: ModalEditor): ModalEditorTestInternals {
   return editor as unknown as ModalEditorTestInternals;
@@ -110,6 +117,62 @@ function setInternalCursor(editor: ModalEditor, cursorCol: number): void {
   internal.preferredVisualCol = null;
   internal.lastAction = null;
   internal.tui?.requestRender?.();
+}
+
+type InstalledExtension = {
+  editorFactory: EditorFactory;
+  readonly notificationCalls: number;
+  readonly shutdownCalls: number;
+  emitShutdown(): Promise<void>;
+  readonly sessionShutdownHandlerCount: number;
+  readonly sessionEndHandlerCount: number;
+};
+
+async function installExtensionWithEditorFactory(): Promise<InstalledExtension> {
+  const pi = createExtensionApiHarness();
+  let editorFactory: EditorFactory | null = null;
+  let notificationCalls = 0;
+  let shutdownCalls = 0;
+  const ctx = {
+    ui: {
+      theme: stubTheme,
+      setEditorComponent(factory: EditorFactory): void {
+        editorFactory = factory;
+      },
+      notify(): void {
+        notificationCalls++;
+      },
+    },
+    shutdown(): void {
+      shutdownCalls++;
+    },
+  };
+
+  installPiVim(pi);
+  await pi.emit("session_start", undefined, ctx);
+
+  if (!editorFactory) {
+    throw new Error("expected session_start to install an editor factory");
+  }
+
+  return {
+    editorFactory,
+    get notificationCalls() {
+      return notificationCalls;
+    },
+    get shutdownCalls() {
+      return shutdownCalls;
+    },
+    async emitShutdown(): Promise<void> {
+      await pi.emit("session_shutdown", undefined, ctx);
+    },
+    get sessionShutdownHandlerCount() {
+      return pi.handlersFor("session_shutdown").length;
+    },
+    get sessionEndHandlerCount() {
+      return pi.handlersFor("session_end").length;
+    },
+  };
 }
 
 function createSpawnErrno(message: string): Error {
@@ -792,6 +855,98 @@ describe("ex mini-mode", () => {
     assert.deepEqual(session.notifications, ["Unsupported ex command: :wq"]);
     assert.equal(session.editor.getText(), "hello");
     assert.deepEqual(session.editor.getCursor(), { line: 0, col: 2 });
+  });
+});
+
+describe("cursor shape lifecycle", () => {
+  it("registers cleanup on session_shutdown and not session_end", async () => {
+    const extension = await installExtensionWithEditorFactory();
+
+    assert.equal(extension.sessionShutdownHandlerCount, 1);
+    assert.equal(extension.sessionEndHandlerCount, 0);
+  });
+
+  it("enables hardware cursor and restores the captured setting on shutdown", async () => {
+    const extension = await installExtensionWithEditorFactory();
+    const tui = createCursorShapeTui({ initialShowHardwareCursor: false });
+    const operations: string[] = [];
+    const originalWrite = tui.terminal.write;
+    const originalSetShowHardwareCursor = tui.setShowHardwareCursor;
+
+    assert.ok(originalWrite, "expected terminal.write test stub");
+    assert.ok(originalSetShowHardwareCursor, "expected setShowHardwareCursor test stub");
+
+    tui.terminal.write = (data: string) => {
+      operations.push(`write:${data}`);
+      originalWrite(data);
+    };
+    tui.setShowHardwareCursor = (show: boolean) => {
+      operations.push(`set:${show}`);
+      originalSetShowHardwareCursor(show);
+    };
+
+    const editor = extension.editorFactory(tui, stubTheme, stubKeybindings);
+
+    assert.equal(editor instanceof ModalEditor, true);
+    assert.equal(tui.getShowHardwareCursorCalls, 1);
+    assert.deepEqual(tui.hardwareCursorValues, [true]);
+    assert.deepEqual(tui.terminalWrites, []);
+
+    await extension.emitShutdown();
+
+    assert.deepEqual(tui.terminalWrites, [RESET_CURSOR_SHAPE]);
+    assert.deepEqual(tui.hardwareCursorValues, [true, false]);
+    assert.deepEqual(operations, [
+      "set:true",
+      `write:${RESET_CURSOR_SHAPE}`,
+      "set:false",
+    ]);
+  });
+
+  it("resets shape without guessing a previous setting when no getter exists", async () => {
+    const extension = await installExtensionWithEditorFactory();
+    const tui = createCursorShapeTui({ getShowHardwareCursor: false });
+    const operations: string[] = [];
+    const originalWrite = tui.terminal.write;
+    const originalSetShowHardwareCursor = tui.setShowHardwareCursor;
+
+    assert.ok(originalWrite, "expected terminal.write test stub");
+    assert.ok(originalSetShowHardwareCursor, "expected setShowHardwareCursor test stub");
+
+    tui.terminal.write = (data: string) => {
+      operations.push(`write:${data}`);
+      originalWrite(data);
+    };
+    tui.setShowHardwareCursor = (show: boolean) => {
+      operations.push(`set:${show}`);
+      originalSetShowHardwareCursor(show);
+    };
+
+    extension.editorFactory(tui, stubTheme, stubKeybindings);
+
+    assert.equal(tui.getShowHardwareCursorCalls, 0);
+    assert.deepEqual(tui.hardwareCursorValues, [true]);
+
+    await extension.emitShutdown();
+
+    assert.deepEqual(tui.terminalWrites, [RESET_CURSOR_SHAPE]);
+    assert.deepEqual(tui.hardwareCursorValues, [true]);
+    assert.deepEqual(operations, ["set:true", `write:${RESET_CURSOR_SHAPE}`]);
+  });
+
+  it("skips startup enablement and cleanup cursor writes on unsupported runtimes", async () => {
+    const extension = await installExtensionWithEditorFactory();
+    const tui = createCursorShapeTui({ setShowHardwareCursor: false });
+
+    extension.editorFactory(tui, stubTheme, stubKeybindings);
+
+    assert.equal(tui.getShowHardwareCursorCalls, 0);
+    assert.deepEqual(tui.hardwareCursorValues, []);
+
+    await extension.emitShutdown();
+
+    assert.deepEqual(tui.terminalWrites, []);
+    assert.deepEqual(tui.hardwareCursorValues, []);
   });
 });
 
