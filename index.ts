@@ -5,6 +5,7 @@ import {
   type ExtensionAPI,
 } from "@mariozechner/pi-coding-agent";
 import {
+  CURSOR_MARKER,
   Key,
   matchesKey,
   truncateToWidth,
@@ -51,6 +52,12 @@ const BRACKETED_PASTE_END = "\x1b[201~";
 const BRACKETED_PASTE_END_TAIL = BRACKETED_PASTE_END.slice(1);
 const MAX_COUNT = 9999;
 const PI_NATIVE_CLIPBOARD_TIMEOUT_MS = 5000;
+const SOFTWARE_CURSOR_START = "\x1b[7m";
+const SOFTWARE_CURSOR_RESETS = ["\x1b[0m", "\x1b[27m"] as const;
+const INSERT_CURSOR_SHAPE = "\x1b[5 q";
+const BLOCK_CURSOR_SHAPE = "\x1b[1 q";
+// eslint-disable-next-line @typescript-eslint/no-unused-vars -- used by lifecycle cleanup in a later batch.
+const RESET_CURSOR_SHAPE = "\x1b[0 q";
 // Pi emits OSC52 before its native clipboard fallback. Give that 5s fallback
 // a small grace so the parent does not kill the helper and discard stdout.
 const CLIPBOARD_WRITE_TIMEOUT_MS = PI_NATIVE_CLIPBOARD_TIMEOUT_MS + 500;
@@ -86,6 +93,90 @@ type ModeLabelColorizers = {
   normal: (s: string) => string;
   ex: (s: string) => string;
 };
+
+type CursorShapeSequence =
+  | typeof INSERT_CURSOR_SHAPE
+  | typeof BLOCK_CURSOR_SHAPE
+  | typeof RESET_CURSOR_SHAPE;
+
+type CursorShapeRuntime = {
+  writeCursorShape: (sequence: CursorShapeSequence) => void;
+  setShowHardwareCursor: (show: boolean) => void;
+  getShowHardwareCursor?: () => boolean | undefined;
+};
+
+type CursorShapeTuiCandidate = {
+  terminal?: { write?: unknown };
+  setShowHardwareCursor?: unknown;
+  getShowHardwareCursor?: unknown;
+};
+
+function getCursorShapeRuntime(tui: unknown): CursorShapeRuntime | null {
+  if (typeof tui !== "object" || tui === null) return null;
+
+  const candidate = tui as CursorShapeTuiCandidate;
+  const terminal = candidate.terminal;
+  if (typeof terminal !== "object" || terminal === null) return null;
+
+  const write = terminal.write;
+  const setShowHardwareCursor = candidate.setShowHardwareCursor;
+  if (typeof write !== "function" || typeof setShowHardwareCursor !== "function") {
+    return null;
+  }
+
+  const runtime: CursorShapeRuntime = {
+    writeCursorShape(sequence: CursorShapeSequence): void {
+      write.call(terminal, sequence);
+    },
+    setShowHardwareCursor(show: boolean): void {
+      setShowHardwareCursor.call(candidate, show);
+    },
+  };
+
+  if (typeof candidate.getShowHardwareCursor === "function") {
+    const getShowHardwareCursor = candidate.getShowHardwareCursor;
+    runtime.getShowHardwareCursor = () => {
+      const value = getShowHardwareCursor.call(candidate);
+      return typeof value === "boolean" ? value : undefined;
+    };
+  }
+
+  return runtime;
+}
+
+function findSoftwareCursorReset(
+  line: string,
+  startIndex: number,
+): { index: number; sequence: (typeof SOFTWARE_CURSOR_RESETS)[number] } | null {
+  let firstReset: { index: number; sequence: (typeof SOFTWARE_CURSOR_RESETS)[number] } | null = null;
+
+  for (const sequence of SOFTWARE_CURSOR_RESETS) {
+    const index = line.indexOf(sequence, startIndex);
+    if (index === -1) continue;
+    if (!firstReset || index < firstReset.index) {
+      firstReset = { index, sequence };
+    }
+  }
+
+  return firstReset;
+}
+
+function stripSoftwareCursorAfterMarker(line: string): string {
+  const markerIndex = line.indexOf(CURSOR_MARKER);
+  if (markerIndex === -1) return line;
+
+  const searchStart = markerIndex + CURSOR_MARKER.length;
+  const cursorStart = line.indexOf(SOFTWARE_CURSOR_START, searchStart);
+  if (cursorStart === -1) return line;
+
+  const cursorContentStart = cursorStart + SOFTWARE_CURSOR_START.length;
+  const reset = findSoftwareCursorReset(line, cursorContentStart);
+  if (!reset) return line;
+
+  return line.slice(0, cursorStart)
+    + line.slice(cursorContentStart, reset.index)
+    + line.slice(reset.index + reset.sequence.length);
+}
 
 type ClipboardCircuitBreaker = {
   consecutiveEnvironmentFailures: number;
@@ -428,6 +519,8 @@ export class ModalEditor extends CustomEditor {
   private currentTransition: TransitionState = "none";
   private onChangeHooked: boolean = false;
   private readonly labelColorizers: ModeLabelColorizers | null;
+  private readonly cursorShapeRuntime: CursorShapeRuntime | null;
+  private lastCursorShapeSequence: CursorShapeSequence | null = null;
 
   // Unnamed register
   private unnamedRegister: string = "";
@@ -443,6 +536,7 @@ export class ModalEditor extends CustomEditor {
     labelColorizers?: ModeLabelColorizers | null,
   ) {
     super(tui, theme, kb);
+    this.cursorShapeRuntime = getCursorShapeRuntime(tui);
     this.labelColorizers = labelColorizers ?? null;
   }
 
@@ -2839,8 +2933,40 @@ export class ModalEditor extends CustomEditor {
     return `${prefix}…${this.takeModeLabelSuffix(rawLabel, suffixWidth)}`;
   }
 
+  private getDesiredCursorShapeSequence(): CursorShapeSequence {
+    return this.mode === "insert" && this.pendingExCommand === null
+      ? INSERT_CURSOR_SHAPE
+      : BLOCK_CURSOR_SHAPE;
+  }
+
+  private stripSoftwareCursorWhenHardwareCursorIsUsed(lines: string[]): boolean {
+    for (let i = lines.length - 1; i >= 0; i--) {
+      const line = lines[i];
+      if (!line?.includes(CURSOR_MARKER)) continue;
+
+      lines[i] = stripSoftwareCursorAfterMarker(line);
+      return true;
+    }
+
+    return false;
+  }
+
+  private syncCursorShapeForRender(lines: string[]): void {
+    if (!this.cursorShapeRuntime) return;
+
+    const hasPromptCursorMarker = this.stripSoftwareCursorWhenHardwareCursorIsUsed(lines);
+    if (!hasPromptCursorMarker) return;
+
+    const sequence = this.getDesiredCursorShapeSequence();
+    if (sequence === this.lastCursorShapeSequence) return;
+
+    this.cursorShapeRuntime.writeCursorShape(sequence);
+    this.lastCursorShapeSequence = sequence;
+  }
+
   render(width: number): string[] {
     const lines = super.render(width);
+    this.syncCursorShapeForRender(lines);
     if (lines.length === 0) return lines;
 
     const rawLabel = this.fitModeLabel(this.getModeLabel(), width);

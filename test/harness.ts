@@ -2,6 +2,8 @@
  * Test harness for ModalEditor integration tests.
  */
 
+import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
+
 import { ModalEditor } from "../index.js";
 
 type ModalEditorConstructorArgs = ConstructorParameters<typeof ModalEditor>;
@@ -11,6 +13,102 @@ export const stubTui = {
   requestRender() {},
   terminal: { rows: 40, cols: 120 },
 } as unknown as ModalEditorConstructorArgs[0];
+
+export type CursorShapeTuiOptions = {
+  terminalWrite?: boolean;
+  getShowHardwareCursor?: boolean;
+  setShowHardwareCursor?: boolean;
+  initialShowHardwareCursor?: boolean;
+};
+
+export type CursorShapeTuiShape = {
+  requestRender(): void;
+  terminal: {
+    rows: number;
+    cols: number;
+    write?: (data: string) => void;
+  };
+  getShowHardwareCursor?: () => boolean;
+  setShowHardwareCursor?: (show: boolean) => void;
+};
+
+export type CursorShapeTuiStub = ModalEditorConstructorArgs[0] & CursorShapeTuiShape & {
+  terminalWrites: string[];
+  hardwareCursorValues: boolean[];
+  getShowHardwareCursorCalls: number;
+};
+
+export function createCursorShapeTui(
+  options: CursorShapeTuiOptions = {},
+): CursorShapeTuiStub {
+  const terminalWrites: string[] = [];
+  const hardwareCursorValues: boolean[] = [];
+  let showHardwareCursor = options.initialShowHardwareCursor ?? false;
+  let getShowHardwareCursorCalls = 0;
+
+  const tui = {
+    requestRender() {},
+    terminal: { rows: 40, cols: 120 },
+    terminalWrites,
+    hardwareCursorValues,
+    get getShowHardwareCursorCalls() {
+      return getShowHardwareCursorCalls;
+    },
+  } as CursorShapeTuiStub;
+
+  if (options.terminalWrite !== false) {
+    tui.terminal.write = (data: string) => {
+      terminalWrites.push(data);
+    };
+  }
+
+  if (options.getShowHardwareCursor !== false) {
+    tui.getShowHardwareCursor = () => {
+      getShowHardwareCursorCalls++;
+      return showHardwareCursor;
+    };
+  }
+
+  if (options.setShowHardwareCursor !== false) {
+    tui.setShowHardwareCursor = (show: boolean) => {
+      showHardwareCursor = show;
+      hardwareCursorValues.push(show);
+    };
+  }
+
+  return tui;
+}
+
+export type ExtensionApiHarness = ExtensionAPI & {
+  handlersFor(event: string): ExtensionHandlerStub[];
+  emit(event: string, payload?: unknown, ctx?: unknown): Promise<unknown[]>;
+};
+
+type ExtensionHandlerStub = (event: unknown, ctx: unknown) => unknown;
+
+export function createExtensionApiHarness(): ExtensionApiHarness {
+  const handlers = new Map<string, ExtensionHandlerStub[]>();
+
+  const harness = {
+    on(event: string, handler: ExtensionHandlerStub): void {
+      const eventHandlers = handlers.get(event) ?? [];
+      eventHandlers.push(handler);
+      handlers.set(event, eventHandlers);
+    },
+    handlersFor(event: string): ExtensionHandlerStub[] {
+      return [...(handlers.get(event) ?? [])];
+    },
+    async emit(event: string, payload?: unknown, ctx?: unknown): Promise<unknown[]> {
+      const results: unknown[] = [];
+      for (const handler of handlers.get(event) ?? []) {
+        results.push(await handler(payload, ctx));
+      }
+      return results;
+    },
+  };
+
+  return harness as unknown as ExtensionApiHarness;
+}
 
 export const stubTheme = {
   borderColor: (s: string) => s,

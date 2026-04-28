@@ -10,10 +10,12 @@ import { spawn } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
+import { CURSOR_MARKER, visibleWidth } from "@mariozechner/pi-tui";
 import type { WordMotionClass } from "../motions.js";
 import type { WordMotionDirection, WordMotionTarget } from "../word-boundary-cache.js";
 import { ModalEditor } from "../index.js";
 import {
+  createCursorShapeTui,
   createEditorWithSpy,
   createMultiLineEditor,
   sendKeys,
@@ -60,6 +62,54 @@ type TryFindTargetArgs = Parameters<ModalEditorWordBoundaryCacheInternals["tryFi
 
 function getRawEditor(editor: ModalEditor): ModalEditorTestInternals {
   return editor as unknown as ModalEditorTestInternals;
+}
+
+const INSERT_CURSOR_SHAPE = "\x1b[5 q";
+const BLOCK_CURSOR_SHAPE = "\x1b[1 q";
+const RESET_CURSOR_SHAPE = "\x1b[0 q";
+const SOFTWARE_CURSOR_SPACE = "\x1b[7m \x1b[0m";
+/* eslint-disable no-control-regex -- DECSCUSR uses ESC. */
+// biome-ignore lint/suspicious/noControlCharactersInRegex: DECSCUSR uses ESC.
+const DECSCUSR_PATTERN = /\x1b\[[015] q/;
+/* eslint-enable no-control-regex */
+
+function focusEditor(editor: ModalEditor): void {
+  editor.focused = true;
+}
+
+function findCursorMarkerLine(lines: string[]): string {
+  const line = lines.find((line) => line.includes(CURSOR_MARKER));
+  assert.ok(line, "expected rendered lines to include CURSOR_MARKER");
+  return line;
+}
+
+function removeCursorMarker(line: string): string {
+  return line.replace(CURSOR_MARKER, "");
+}
+
+function assertNoCursorShapeSequences(lines: string[]): void {
+  for (const line of lines) {
+    assert.doesNotMatch(line, DECSCUSR_PATTERN);
+  }
+}
+
+function setInternalCursor(editor: ModalEditor, cursorCol: number): void {
+  const internal = editor as unknown as {
+    state?: { cursorLine?: number; cursorCol?: number };
+    preferredVisualCol?: number | null;
+    lastAction?: string | null;
+    tui?: { requestRender?: () => void };
+  };
+
+  if (!internal.state) {
+    throw new Error("ModalEditor test internal state unavailable");
+  }
+
+  internal.state.cursorLine = 0;
+  internal.state.cursorCol = cursorCol;
+  internal.preferredVisualCol = null;
+  internal.lastAction = null;
+  internal.tui?.requestRender?.();
 }
 
 function createSpawnErrno(message: string): Error {
@@ -742,6 +792,122 @@ describe("ex mini-mode", () => {
     assert.deepEqual(session.notifications, ["Unsupported ex command: :wq"]);
     assert.equal(session.editor.getText(), "hello");
     assert.deepEqual(session.editor.getCursor(), { line: 0, col: 2 });
+  });
+});
+
+describe("cursor shape rendering", () => {
+  it("writes insert cursor shape and strips the EOL software cursor", () => {
+    const tui = createCursorShapeTui();
+    const editor = new ModalEditor(tui, stubTheme, stubKeybindings);
+    focusEditor(editor);
+
+    const lines = editor.render(20);
+    const markerLine = findCursorMarkerLine(lines);
+
+    assert.deepEqual(tui.terminalWrites, [INSERT_CURSOR_SHAPE]);
+    assert.equal(tui.terminalWrites.includes(RESET_CURSOR_SHAPE), false);
+    assert.equal(markerLine.includes(CURSOR_MARKER), true);
+    assert.equal(markerLine.includes(SOFTWARE_CURSOR_SPACE), false);
+    assert.equal(visibleWidth(removeCursorMarker(markerLine)), 20);
+    assertNoCursorShapeSequences(lines);
+  });
+
+  it("preserves the character under the insert cursor", () => {
+    const tui = createCursorShapeTui();
+    const editor = new ModalEditor(tui, stubTheme, stubKeybindings);
+    for (const char of "abc") {
+      editor.handleInput(char);
+    }
+    focusEditor(editor);
+    setInternalCursor(editor, 1);
+
+    const lines = editor.render(20);
+    const markerLine = findCursorMarkerLine(lines);
+    const plainLine = removeCursorMarker(markerLine);
+
+    assert.deepEqual(tui.terminalWrites, [INSERT_CURSOR_SHAPE]);
+    assert.equal(markerLine.includes("\x1b[7mb\x1b[0m"), false);
+    assert.equal(plainLine.startsWith("abc"), true);
+    assert.equal(visibleWidth(plainLine), 20);
+    assertNoCursorShapeSequences(lines);
+  });
+
+  it("writes normal block cursor shape and strips the software cursor", () => {
+    const tui = createCursorShapeTui();
+    const editor = new ModalEditor(tui, stubTheme, stubKeybindings);
+    sendKeys(editor, ["a", "b", "\x1b"]);
+    focusEditor(editor);
+
+    const lines = editor.render(20);
+    const markerLine = findCursorMarkerLine(lines);
+
+    assert.deepEqual(tui.terminalWrites, [BLOCK_CURSOR_SHAPE]);
+    assert.equal(markerLine.includes(SOFTWARE_CURSOR_SPACE), false);
+    assertNoCursorShapeSequences(lines);
+  });
+
+  it("writes EX block cursor shape and preserves EX label rendering", () => {
+    const tui = createCursorShapeTui();
+    const editor = new ModalEditor(tui, stubTheme, stubKeybindings);
+    sendKeys(editor, ["\x1b", ":"]);
+    focusEditor(editor);
+
+    const lines = editor.render(20);
+    const markerLine = findCursorMarkerLine(lines);
+    const footer = lines.at(-1) ?? "";
+
+    assert.deepEqual(tui.terminalWrites, [BLOCK_CURSOR_SHAPE]);
+    assert.ok(footer.includes(" EX :_ "));
+    assert.equal(markerLine.includes(SOFTWARE_CURSOR_SPACE), false);
+    assertNoCursorShapeSequences(lines);
+  });
+
+  it("caches repeated renders and writes only changed cursor shapes", () => {
+    const tui = createCursorShapeTui();
+    const editor = new ModalEditor(tui, stubTheme, stubKeybindings);
+    focusEditor(editor);
+
+    editor.render(20);
+    editor.render(20);
+    editor.handleInput("\x1b");
+    editor.render(20);
+    editor.render(20);
+    editor.handleInput("i");
+    editor.render(20);
+
+    assert.deepEqual(tui.terminalWrites, [
+      INSERT_CURSOR_SHAPE,
+      BLOCK_CURSOR_SHAPE,
+      INSERT_CURSOR_SHAPE,
+    ]);
+  });
+
+  it("falls back to the software cursor when hardware cursor APIs are unsupported", () => {
+    const tui = createCursorShapeTui({ setShowHardwareCursor: false });
+    const editor = new ModalEditor(tui, stubTheme, stubKeybindings);
+    focusEditor(editor);
+
+    const lines = editor.render(20);
+    const markerLine = findCursorMarkerLine(lines);
+
+    assert.deepEqual(tui.terminalWrites, []);
+    assert.equal(markerLine.includes(SOFTWARE_CURSOR_SPACE), true);
+    assertNoCursorShapeSequences(lines);
+  });
+
+  it("keeps the software cursor when focused render has no cursor marker", () => {
+    const tui = createCursorShapeTui();
+    const editor = new ModalEditor(tui, stubTheme, stubKeybindings);
+    const internal = editor as unknown as { autocompleteState?: string | null };
+    internal.autocompleteState = "regular";
+    focusEditor(editor);
+
+    const lines = editor.render(20);
+
+    assert.equal(lines.some((line) => line.includes(CURSOR_MARKER)), false);
+    assert.equal(lines.some((line) => line.includes(SOFTWARE_CURSOR_SPACE)), true);
+    assert.deepEqual(tui.terminalWrites, []);
+    assertNoCursorShapeSequences(lines);
   });
 });
 
