@@ -183,10 +183,45 @@ describe("resolveQuoteObjectRange", () => {
     });
   });
 
-  it("keeps one, two, and three preceding backslashes distinct", () => {
-    assert.equal(isEscapedDelimiter(String.raw`\"`, 1), true);
-    assert.equal(isEscapedDelimiter(String.raw`\\"`, 2), false);
-    assert.equal(isEscapedDelimiter(String.raw`\\\"`, 3), true);
+  it("keeps one, two, and three preceding backslashes distinct while resolving quotes", () => {
+    const cases = [
+      {
+        name: "one preceding backslash",
+        text: String.raw`a \"skip\" "yes"`,
+        firstQuoteEscaped: true,
+      },
+      {
+        name: "two preceding backslashes",
+        text: String.raw`a \\"yes" z`,
+        firstQuoteEscaped: false,
+      },
+      {
+        name: "three preceding backslashes",
+        text: String.raw`a \\\"skip\\\" "yes"`,
+        firstQuoteEscaped: true,
+      },
+    ];
+
+    for (const quoteCase of cases) {
+      const firstQuote = quoteCase.text.indexOf("\"");
+      const startAbs = quoteCase.text.indexOf("yes");
+
+      assert.notEqual(firstQuote, -1, `${quoteCase.name} first quote`);
+      assert.notEqual(startAbs, -1, `${quoteCase.name} payload`);
+      assert.equal(
+        isEscapedDelimiter(quoteCase.text, firstQuote),
+        quoteCase.firstQuoteEscaped,
+        quoteCase.name,
+      );
+      assert.deepEqual(
+        resolveDelimitedTextObjectRange(quoteCase.text, startAbs, "i", "\""),
+        {
+          startAbs,
+          endAbs: startAbs + "yes".length,
+        },
+        quoteCase.name,
+      );
+    }
   });
 
   it("does not cross newline boundaries", () => {
@@ -259,6 +294,21 @@ describe("resolveBracketObjectRange", () => {
     assert.deepEqual(resolveDelimitedTextObjectRange(text, 5, "i", "("), {
       startAbs: 2,
       endAbs: 5,
+    });
+  });
+
+  it("resolves large buffers with many unmatched delimiters using stack-plus-best behavior", () => {
+    const unmatchedClosers = "}".repeat(2_000);
+    const unmatchedOpeners = "{".repeat(4_000);
+    const target = "{outer {inner} tail}";
+    const text = `${unmatchedClosers}${unmatchedOpeners}${target}${unmatchedOpeners}`;
+    const targetStartAbs = unmatchedClosers.length + unmatchedOpeners.length;
+    const innerPairStart = target.indexOf("{inner}");
+    const cursorAbs = targetStartAbs + target.indexOf("inner");
+
+    assert.deepEqual(resolveDelimitedTextObjectRange(text, cursorAbs, "a", "{"), {
+      startAbs: targetStartAbs + innerPairStart,
+      endAbs: targetStartAbs + innerPairStart + "{inner}".length,
     });
   });
 

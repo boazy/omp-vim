@@ -2770,6 +2770,158 @@ describe("bracket text objects", () => {
   });
 });
 
+describe("text object cancellation hardening", () => {
+  it("unsupported object keys after di, ci, and yi cancel before the next normal key", () => {
+    const scenarios = [
+      { name: "diq", keys: ["d", "i", "q"] },
+      { name: "ciq", keys: ["c", "i", "q"] },
+      { name: "yiq", keys: ["y", "i", "q"] },
+    ];
+
+    for (const scenario of scenarios) {
+      const { editor } = createEditorWithSpy("foo bar");
+      const beforeCursor = editor.getCursor();
+      editor.setRegister("seed");
+
+      sendKeys(editor, scenario.keys);
+
+      assert.equal(editor.getText(), "foo bar", `${scenario.name} cancellation text`);
+      assert.equal(editor.getRegister(), "seed", `${scenario.name} cancellation register`);
+      assert.deepEqual(editor.getCursor(), beforeCursor, `${scenario.name} cancellation cursor`);
+      assert.equal(editor.getMode(), "normal", `${scenario.name} cancellation mode`);
+
+      sendKeys(editor, ["x"]);
+
+      assert.equal(editor.getText(), "oo bar", `${scenario.name} next key text`);
+      assert.equal(editor.getRegister(), "f", `${scenario.name} next key register`);
+    }
+  });
+
+  it("unmatched delimiters cancel without mutation or register writes", () => {
+    const scenarios = [
+      {
+        name: "di\"",
+        initial: "say \"hello",
+        cursorCol: 5,
+        keys: ["d", "i", "\""],
+      },
+      {
+        name: "ci(",
+        initial: "call(foo",
+        cursorCol: 6,
+        keys: ["c", "i", "("],
+      },
+      {
+        name: "yi{",
+        initial: "obj {foo",
+        cursorCol: 6,
+        keys: ["y", "i", "{"],
+      },
+    ];
+
+    for (const scenario of scenarios) {
+      const { editor } = createEditorWithSpy(scenario.initial);
+      const beforeCursor = { line: 0, col: scenario.cursorCol };
+      editor.setRegister("seed");
+
+      setInternalCursor(editor, beforeCursor.col, beforeCursor.line);
+      sendKeys(editor, scenario.keys);
+
+      assert.equal(editor.getText(), scenario.initial, `${scenario.name} text`);
+      assert.equal(editor.getRegister(), "seed", `${scenario.name} register`);
+      assert.deepEqual(editor.getCursor(), beforeCursor, `${scenario.name} cursor`);
+      assert.equal(editor.getMode(), "normal", `${scenario.name} mode`);
+    }
+  });
+
+  it("unmatched delimiter cancellation is not sticky", () => {
+    const initial = "say \"hello";
+    const { editor } = createEditorWithSpy(initial);
+    const beforeCursor = { line: 0, col: 5 };
+    editor.setRegister("seed");
+
+    setInternalCursor(editor, beforeCursor.col, beforeCursor.line);
+    sendKeys(editor, ["d", "i", "\""]);
+
+    assert.equal(editor.getText(), initial);
+    assert.equal(editor.getRegister(), "seed");
+    assert.deepEqual(editor.getCursor(), beforeCursor);
+
+    sendKeys(editor, ["x"]);
+
+    assert.equal(editor.getText(), "say \"ello");
+    assert.equal(editor.getRegister(), "h");
+  });
+
+  it("counted delimited examples cancel without mutation or register writes", () => {
+    const scenarios = [
+      {
+        name: "d2i\"",
+        initial: "say \"hello\" now",
+        cursorCol: 6,
+        keys: ["d", "2", "i", "\""],
+      },
+      {
+        name: "2ci(",
+        initial: "call(foo)",
+        cursorCol: 6,
+        keys: ["2", "c", "i", "("],
+      },
+      {
+        name: "y2a{",
+        initial: "obj {foo}",
+        cursorCol: 6,
+        keys: ["y", "2", "a", "{"],
+      },
+    ];
+
+    for (const scenario of scenarios) {
+      const { editor } = createEditorWithSpy(scenario.initial);
+      const beforeCursor = { line: 0, col: scenario.cursorCol };
+      editor.setRegister("seed");
+
+      setInternalCursor(editor, beforeCursor.col, beforeCursor.line);
+      sendKeys(editor, scenario.keys);
+
+      assert.equal(editor.getText(), scenario.initial, `${scenario.name} text`);
+      assert.equal(editor.getRegister(), "seed", `${scenario.name} register`);
+      assert.deepEqual(editor.getCursor(), beforeCursor, `${scenario.name} cursor`);
+      assert.equal(editor.getMode(), "normal", `${scenario.name} mode`);
+    }
+  });
+
+  it("counted yank word and WORD text objects remain unsupported", () => {
+    const scenarios = [
+      {
+        name: "y2iw",
+        initial: "foo bar",
+        cursorCol: 0,
+        keys: ["y", "2", "i", "w"],
+      },
+      {
+        name: "2yiW",
+        initial: "foo path/to-file bar",
+        cursorCol: 4,
+        keys: ["2", "y", "i", "W"],
+      },
+    ];
+
+    for (const scenario of scenarios) {
+      const { editor } = createEditorWithSpy(scenario.initial);
+      const beforeCursor = { line: 0, col: scenario.cursorCol };
+      editor.setRegister("seed");
+
+      setInternalCursor(editor, beforeCursor.col, beforeCursor.line);
+      sendKeys(editor, scenario.keys);
+
+      assert.equal(editor.getText(), scenario.initial, `${scenario.name} text`);
+      assert.equal(editor.getRegister(), "seed", `${scenario.name} register`);
+      assert.deepEqual(editor.getCursor(), beforeCursor, `${scenario.name} cursor`);
+      assert.equal(editor.getMode(), "normal", `${scenario.name} mode`);
+    }
+  });
+});
+
 // ---------------------------------------------------------------------------
 // Single-key edit commands — x / s / S / D / C
 // ---------------------------------------------------------------------------
