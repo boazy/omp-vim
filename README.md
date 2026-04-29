@@ -42,7 +42,7 @@ npm run hooks:install
 
 ## stats
 
-- **116 commands**: motions, operators, counts, text objects, undo/redo, ex quit
+- **188 commands**: motions, operators, counts, text objects, undo/redo, ex quit
 - **sub-µs word motions** via precomputed boundary cache (~4ms startup, ~150KB memory)
 - **0 dependencies**
 
@@ -59,10 +59,9 @@ u          # undo
 2}         # jump two paragraphs forward
 ```
 
-Mode indicator (`INSERT` / `NORMAL` / `EX`) appears at bottom-right,
-theme-colored (reverse `borderMuted` / `borderAccent` / `warning`).
+Mode indicator (`INSERT` / `NORMAL` / `EX`) appears bottom-right, theme-colored.
 
-pi-vim requires `@mariozechner/pi-tui >= 0.47.0` so Pi's cursor marker API is available. When the TUI runtime also exposes hardware cursor controls (`@mariozechner/pi-tui >= 0.49.3`) and the terminal honors DECSCUSR cursor-shape sequences, pi-vim shows a blinking bar cursor in Insert mode and a blinking block cursor in Normal and EX mode. Runtimes in the supported range without hardware cursor controls, or terminals that ignore cursor-shape sequences, keep the existing software cursor behavior.
+Requires `@mariozechner/pi-tui >= 0.47.0`. With `pi-tui >= 0.49.3` and DECSCUSR support, cursor shape follows mode; otherwise software cursor remains.
 
 ## why pi-vim
 
@@ -80,6 +79,11 @@ full Vim parity (visual mode, macros, search, extended ex-commands, …).
 |------|------|
 | Jump to exact line 25 | `25gg` (or `25G`) |
 | Delete two words | `2dw` |
+| Change current whitespace-delimited WORD | `ciW` |
+| Delete WORD plus adjacent whitespace | `daW` |
+| Change inside double quotes | `ci"` |
+| Delete inside parentheses | `di(` |
+| Yank braces with contents | `ya{` |
 | Change to end of line | `C` |
 | Delete current + 2 lines below | `d2j` |
 | Yank 3 lines | `3yy` |
@@ -137,46 +141,18 @@ Insert-mode shortcuts (stay in Insert mode):
 
 ### navigation (normal mode)
 
-A `{count}` prefix can be prepended to any navigation key (max: `9999`).
+A `{count}` prefix can be prepended to navigation keys (max: `9999`).
 
-| key           | action                        |
-|---------------|-------------------------------|
-| `h`           | Left                          |
-| `l`           | Right                         |
-| `j`           | Down                          |
-| `k`           | Up                            |
-| `{count}h/l`  | Move left/right `{count}` cols  |
-| `{count}j/k`  | Move down/up `{count}` lines (clamped to buffer size) |
-| `0`           | Line start                    |
-| `^`           | First non-whitespace char of line |
-| `_`           | First non-whitespace char; with `{count}`, move down `count - 1` lines first |
-| `$`           | Line end                      |
-| `gg`          | Buffer start (line 1)         |
-| `{count}gg`   | Go to line `{count}` (1-indexed, clamped) |
-| `G`           | Buffer end (last line)        |
-| `{count}G`    | Go to line `{count}` (1-indexed, clamped) |
-| `w`           | Next `word` start (keyword/punctuation aware) |
-| `b`           | Previous `word` start         |
-| `e`           | `word` end (inclusive)        |
-| `W`           | Next `WORD` start (whitespace-delimited token) |
-| `B`           | Previous `WORD` start         |
-| `E`           | `WORD` end (inclusive)        |
-| `{count}w/b/e`| Move `{count}` `word` motions |
-| `{count}W/B/E`| Move `{count}` `WORD` motions |
-| `}`           | Move to next paragraph start (line start col `0`) |
-| `{`           | Move to previous paragraph start (line start col `0`) |
-| `{count}}`    | Repeat `}` `{count}` times |
-| `{count}{`    | Repeat `{` `{count}` times |
+| key | action |
+|-----|--------|
+| `h` / `l` / `j` / `k`; `{count}h/l/j/k` | Move left/right/down/up; line moves clamp to the buffer |
+| `0` / `^` / `_` / `$` | Line start / first non-whitespace / counted first non-whitespace / line end |
+| `gg` / `G`; `{count}gg` / `{count}G` | Buffer start/end or absolute 1-indexed line |
+| `w` / `b` / `e`; `{count}w/b/e` | `word` start/back/end motions |
+| `W` / `B` / `E`; `{count}W/B/E` | whitespace-delimited `WORD` motions |
+| `{` / `}`; `{count}{` / `{count}}` | Previous/next paragraph start |
 
-`word` (`w/b/e`) splits punctuation from keyword chars. `WORD` (`W/B/E`)
-treats any non-whitespace run as one token (`foo-bar`, `path/to`, `x.y`).
-
-Paragraph boundary:
-- blank line matches `^\s*$`
-- paragraph start = non-blank at BOF, or non-blank line after a blank line
-
-`{` / `}` are navigation-only (no text/register mutation); counted forms step
-paragraph-by-paragraph and clamp at BOF/EOF. Brace operator forms (`d{`, `c}`, `y{`, …) are out of scope.
+`word` splits punctuation from keyword chars; `WORD` treats any non-whitespace run as one token (`foo-bar`, `path/to`). Paragraph starts are non-blank lines at BOF or after blank lines (`^\s*$`). `{` / `}` are navigation-only; brace operator forms (`d{`, `c}`, `y{`, …) are out of scope.
 
 ---
 
@@ -202,59 +178,58 @@ Char-find motions compose with operators: `df{char}`, `ct{char}`, `d{count}t{cha
 
 Register-writing edits write to the unnamed register. With the default clipboard mirror policy, they also mirror to the system clipboard best-effort (clipboard failure never breaks editing).
 
+#### text objects
+
+Text objects compose as `d`/`c`/`y` + `i`/`a` + object. `i` means inner; `a` means around.
+
+| object | keys | range |
+|--------|------|-------|
+| word | `iw` / `aw` | Keyword word; `aw` includes spaces |
+| WORD | `iW` / `aW` | Line-local whitespace-delimited WORD; `aW` includes adjacent whitespace |
+| quotes | `i"` / `a"`, `i'` / `a'`, <code>i`</code> / <code>a`</code> | Smallest containing quote pair on the line |
+| parentheses | `i(` / `a(`; aliases `i)` / `a)`, `ib` / `ab` | Smallest containing pair |
+| brackets | `i[` / `a[`; aliases `i]` / `a]` | Smallest containing pair |
+| braces | `i{` / `a{`; aliases `i}` / `a}`, `iB` / `aB` | Smallest containing pair |
+
+Semantics:
+- WORD objects are line-local and whitespace-delimited.
+- Quote objects are line-local; odd-backslash escapes are ignored; `a` includes delimiters only, not surrounding whitespace.
+- Bracket objects are buffer-aware, nested, lexical, and not parser-aware; brackets inside strings/comments still count.
+- Empty inner delimiter objects no-op for delete/yank; change enters Insert at the inner start without writing the register.
+- Delimited counts cancel (`d2i"`, `2ci(`, `y2a{`). Counted word/WORD text objects work for delete/change only; counted yank text objects cancel.
+
 #### delete `d{motion}` / `dd`
 
-A `{count}` or dual-count prefix (`{pfx}d{op}{motion}`) is supported for
-word, char-find, and linewise motions. Maximum total count: `9999`.
+A `{count}` or dual-count prefix (`{pfx}d{op}{motion}`) is supported for word,
+WORD, char-find, and linewise motions. Maximum total count: `9999`.
 
-| command           | deletes                                                   |
-|-------------------|-----------------------------------------------------------|
-| `dw`              | Forward to next `word` start (exclusive, can cross lines) |
-| `de`              | Forward to `word` end (inclusive, can cross lines)        |
-| `db`              | Backward to `word` start (exclusive, can cross lines)     |
-| `dW`              | Forward to next `WORD` start (exclusive, can cross lines) |
-| `dE`              | Forward to `WORD` end (inclusive, can cross lines)        |
-| `dB`              | Backward to `WORD` start (exclusive, can cross lines)     |
-| `d{count}w/e/b`   | Forward/backward `{count}` `word` motions                 |
-| `d{count}W/E/B`   | Forward/backward `{count}` `WORD` motions                 |
-| `d$`              | To end of line                                            |
-| `d0`              | To start of line                                          |
-| `d^`              | To first non-whitespace char of line                      |
-| `d_`              | Current line (linewise, same as `dd`)                     |
-| `d{count}_`       | `{count}` lines (linewise, same as `{count}dd`)           |
-| `dd`              | Current line (linewise)                                   |
-| `{count}dd`       | `{count}` lines (linewise)                                |
-| `d{count}j`       | Current line + `{count}` lines below (linewise)           |
-| `d{count}k`       | Current line + `{count}` lines above (linewise)           |
-| `dG`              | Current line to end of buffer (linewise)                  |
-| `df{char}`        | To and including `char`                                   |
-| `d{count}f{char}` | To and including Nth `char`                               |
-| `dt{char}`        | Up to (not including) `char`                              |
-| `dF{char}`        | Backward to and including `char`                          |
-| `dT{char}`        | Backward to one after `char`                              |
-| `diw`             | Inner word                                                |
-| `daw`             | Around word (includes surrounding spaces)                 |
-| `d{count}aw`      | Around `{count}` words                                    |
+| command | deletes |
+|---------|---------|
+| `dw` / `de` / `db`; `dW` / `dE` / `dB` | word/WORD motion ranges; `{count}` repeats |
+| `d$` / `d0` / `d^` | To EOL / BOL / first non-whitespace |
+| `d_` / `dd`; `d{count}_` / `{count}dd` | Current or counted whole lines |
+| `d{count}j` / `d{count}k` / `dG` | Linewise down/up/to EOF |
+| `df{c}` / `dt{c}` / `dF{c}` / `dT{c}`; `d{count}f{c}` | Char-find ranges |
+| `diw` / `daw`; `diW` / `daW` | Inner/around word or WORD |
+| `d{count}iw` / `d{count}iW`; `d{count}aw` / `d{count}aW` | Counted word/WORD text objects |
+| `di"` / `da"` (`'`, <code>`</code>) | Inside/around quotes |
+| `di(` / `da(`, `di[` / `da[`, `di{` / `da{` | Inside/around brackets; aliases `)`, `]`, `}`, `b`, `B` |
 
 #### change `c{motion}` / `cc`
 
 Same motion and count set as `d`. Deletes text then enters Insert mode.
 
-| command         | action                             |
-|-----------------|------------------------------------|
-| `cw`            | Change `word` + Insert                        |
-| `ce` / `cb`     | Change to `word` end / previous `word` start  |
-| `cW`            | Change `WORD` + Insert (`cW` on non-space behaves like `cE`) |
-| `cE` / `cB`     | Change to `WORD` end / previous `WORD` start  |
-| `c{count}w/e/b` | Change `{count}` `word` motions + Insert      |
-| `c{count}W/E/B` | Change `{count}` `WORD` motions + Insert      |
-| `ciw`           | Change inner word                             |
-| `caw`           | Change around word                            |
-| `cc`            | Delete line content + Insert                  |
-| `c_`            | Change line (linewise, same as `cc`)                  |
-| `c{count}_`     | Change `{count}` lines (linewise)                     |
+| command | action |
+|---------|--------|
+| `cw` / `ce` / `cb`; `cW` / `cE` / `cB` | Change word/WORD motion ranges + Insert |
+| `c{count}w/e/b`; `c{count}W/E/B` | Change counted word/WORD motions + Insert |
+| `ciw` / `caw`; `ciW` / `caW` | Change word/WORD text objects + Insert |
+| `c{count}iw` / `c{count}iW`; `c{count}aw` / `c{count}aW` | Change counted word/WORD text objects + Insert |
+| `ci"` / `ca"` (`'`, <code>`</code>) | Change inside/around quotes + Insert |
+| `ci(` / `ca(`, `ci[` / `ca[`, `ci{` / `ca{` | Change inside/around brackets + Insert |
+| `cc` / `c_`; `c{count}_` | Change current or counted whole lines + Insert |
 | `c$` / `c0` / `c^` | Delete to EOL / BOL / first non-whitespace + Insert |
-| …               | All `d` motions apply                         |
+| … | All `d` motions apply |
 
 #### single-key edits
 
@@ -277,33 +252,20 @@ A `{count}` prefix is supported for `x`, `p`, `P`. Maximum: `9999`.
 
 Same motion set as `d`. Writes to register, **no text mutation**.
 
-| command | yanks                           |
-|---------|---------------------------------|
-| `yy`         | Whole line + trailing `\n`                     |
-| `Y`          | Whole line + trailing `\n` (same as `yy`)      |
-| `{count}yy`  | `{count}` whole lines + trailing `\n`          |
-| `{count}Y`   | `{count}` whole lines + trailing `\n` (same as `{count}yy`) |
-| `y{count}j`  | Current line + `{count}` lines below (linewise) |
-| `y{count}k`  | Current line + `{count}` lines above (linewise) |
-| `yG`         | Current line to end of buffer (linewise)         |
-| `yw`         | Forward to next `word` start                      |
-| `ye`         | To `word` end (inclusive)                         |
-| `yb`         | Backward to `word` start                          |
-| `yW`         | Forward to next `WORD` start                      |
-| `yE`         | To `WORD` end (inclusive)                         |
-| `yB`         | Backward to `WORD` start                          |
-| `y$`         | To end of line                                    |
-| `y0`         | To start of line                                  |
-| `y^`         | To first non-whitespace char of line              |
-| `y_`         | Whole line (linewise, same as `yy`)               |
-| `y{count}_`  | `{count}` whole lines (linewise)                  |
-| `yf{c}`      | To and including `char`                           |
-| `yiw`        | Inner word                                        |
-| `yaw`        | Around word (includes spaces)                     |
+| command | yanks |
+|---------|-------|
+| `yy` / `Y`; `{count}yy` / `{count}Y` | Whole line(s) + trailing `\n` |
+| `y{count}j` / `y{count}k` / `yG`; `y_` / `y{count}_` | Linewise ranges |
+| `yw` / `ye` / `yb`; `yW` / `yE` / `yB` | word/WORD motion ranges |
+| `y$` / `y0` / `y^`; `yf{c}` | EOL / BOL / first non-whitespace / char-find |
+| `yiw` / `yaw`; `yiW` / `yaW` | Inner/around word or WORD |
+| `yi"` / `ya"` (`'`, <code>`</code>) | Inside/around quotes |
+| `yi(` / `ya(`, `yi[` / `ya[`, `yi{` / `ya{` | Inside/around brackets; aliases `)`, `]`, `}`, `b`, `B` |
 
-Counted `word`/`WORD` yank (`y2w`, `2yw`, `y2W`, `2yW`, …) is intentionally
-not implemented and cancels the pending operator. Linewise counted yank
-(`{count}yy`, `y{count}j/k`) is supported.
+Counted `word`/`WORD` yank motions and counted yank text objects (`y2w`,
+`2yw`, `y2W`, `2yW`, `y2aw`, `2yaw`, `y2aW`, `y2a{`, …) are intentionally not
+implemented and cancel the pending operator. Linewise counted yank (`{count}yy`,
+`y{count}j/k`) is supported.
 
 ---
 
@@ -354,7 +316,7 @@ Paste text ending in `\n` is treated as line-wise.
 | `0` / `$` operators | Exclusive of the anchor col | `0` is inclusive of col 0 |
 | Undo / redo | Delegates undo to readline; normal-mode `<C-r>` redo is supported | Full per-change undo tree |
 | Visual mode | Not implemented | `v`, `V`, `<C-v>` |
-| Text objects | `iw` / `aw` only | Full text-object set |
+| Text objects | `iw` / `aw`, `iW` / `aW`, quote objects, and paren/bracket/brace objects; delimited counts cancel | Full text-object set |
 | Count prefix | Operators, motions, navigation, `x`, `r`, `p`, `P`; capped at `MAX_COUNT=9999` | Full support |
 | Registers / macros / search | Not implemented | Supported |
 | Ex commands | Quit-only EX mini-mode (`:q`, `:q!`, `:qa`, `:qa!`) | Full ex command-line surface |
@@ -367,7 +329,12 @@ Paste text ending in `\n` is treated as line-wise.
 Explicitly deferred:
 
 - Visual modes (`v`, `V`, block visual)
-- Text objects beyond word (`ip`, `i"`, `i(`, …)
+- Tag text objects (`it`, `at`)
+- Paragraph/sentence text objects (`ip`, `ap`, `is`, `as`)
+- Angle bracket text objects (`i<`, `a<`)
+- Visual-mode text-object selection
+- Parser-aware delimiter matching
+- Delimited-object counts (`d2i"`, `2ci(`, `y2a{`)
 - Named registers (`"a`, `"b`, …), macros (`q{char}`, `@{char}`)
 - Ex surface beyond quit (`:s`, `:g`, `:w`, `:r`, …)
 - Search (`/`, `?`, `n`, `N`), repeat (`.`)
