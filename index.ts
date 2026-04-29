@@ -54,6 +54,7 @@ import {
   type RegisterWriteSource,
 } from "./clipboard-policy.js";
 import {
+  resolveDelimitedTextObjectRange,
   resolveWordTextObjectRange,
   type TextObjectKind,
   type TextObjectRange,
@@ -1256,6 +1257,10 @@ export class ModalEditor extends CustomEditor {
     return Math.min(MAX_COUNT, total);
   }
 
+  private hasPendingCount(): boolean {
+    return this.prefixCount.length > 0 || this.operatorCount.length > 0;
+  }
+
   private cancelPendingOperator(data: string): void {
     this.pendingOperator = null;
     this.prefixCount = "";
@@ -1293,12 +1298,6 @@ export class ModalEditor extends CustomEditor {
   }
 
   private handlePendingTextObject(data: string): void {
-    if (data !== "w" && data !== "W") {
-      this.pendingTextObject = null;
-      this.cancelPendingOperator(data);
-      return;
-    }
-
     const pendingTextObject = this.pendingTextObject;
     this.pendingTextObject = null;
     if (!pendingTextObject) {
@@ -1306,35 +1305,73 @@ export class ModalEditor extends CustomEditor {
       return;
     }
 
-    const semanticClass: WordTextObjectClass = data === "W" ? "WORD" : "word";
-    const count = this.takeTotalCount(1);
-    const range = this.getWordObjectRange(pendingTextObject, count, semanticClass);
-    if (!range || !this.pendingOperator) {
-      this.pendingOperator = null;
+    const hasCount = this.hasPendingCount();
+
+    if (this.pendingOperator === "y" && hasCount) {
+      this.cancelPendingOperator(data);
       return;
     }
 
-    const { startAbs, endAbs } = range;
-    if (this.pendingOperator === "d") {
-      this.deleteRangeByAbsolute(startAbs, endAbs);
-      this.pendingOperator = null;
+    if (data === "w" || data === "W") {
+      const semanticClass: WordTextObjectClass = data === "W" ? "WORD" : "word";
+      const count = this.takeTotalCount(1);
+      const range = this.getWordObjectRange(pendingTextObject, count, semanticClass);
+      if (!range || !this.pendingOperator) {
+        this.pendingOperator = null;
+        return;
+      }
+
+      this.applyResolvedTextObjectRange(range);
       return;
     }
 
-    if (this.pendingOperator === "c") {
-      this.deleteRangeByAbsolute(startAbs, endAbs);
-      this.pendingOperator = null;
+    if (hasCount) {
+      this.cancelPendingOperator(data);
+      return;
+    }
+
+    const range = resolveDelimitedTextObjectRange(
+      this.getText(),
+      this.getAbsoluteIndexFromCursor(),
+      pendingTextObject,
+      data,
+    );
+    if (!range) {
+      this.cancelPendingOperator(data);
+      return;
+    }
+
+    this.applyResolvedTextObjectRange(range);
+  }
+
+  private applyResolvedTextObjectRange(range: TextObjectRange): void {
+    const pendingOperator = this.pendingOperator;
+    this.pendingOperator = null;
+
+    if (!pendingOperator || range.endAbs < range.startAbs) return;
+
+    if (range.endAbs === range.startAbs) {
+      if (pendingOperator === "c") {
+        this.moveCursorToAbsoluteIndex(range.startAbs);
+        this.mode = "insert";
+      }
+      return;
+    }
+
+    if (pendingOperator === "d") {
+      this.deleteRangeByAbsolute(range.startAbs, range.endAbs);
+      return;
+    }
+
+    if (pendingOperator === "c") {
+      this.deleteRangeByAbsolute(range.startAbs, range.endAbs);
       this.mode = "insert";
       return;
     }
 
-    if (this.pendingOperator === "y") {
-      this.yankRangeByAbsolute(startAbs, endAbs);
-      this.pendingOperator = null;
-      return;
+    if (pendingOperator === "y") {
+      this.yankRangeByAbsolute(range.startAbs, range.endAbs);
     }
-
-    this.pendingOperator = null;
   }
 
   private handlePendingDelete(data: string): void {
@@ -2610,14 +2647,14 @@ export class ModalEditor extends CustomEditor {
       return;
     }
 
-    if (this.prefixCount.length > 0 || this.operatorCount.length > 0) {
-      // Counted forms beyond yy, y{count}j/k, and y{count}{f/F/t/T} are out of scope.
-      this.cancelPendingOperator(data);
+    if (data === "i" || data === "a") {
+      this.pendingTextObject = data;
       return;
     }
 
-    if (data === "i" || data === "a") {
-      this.pendingTextObject = data;
+    if (this.hasPendingCount()) {
+      // Counted forms beyond yy, y{count}j/k, and y{count}{f/F/t/T} are out of scope.
+      this.cancelPendingOperator(data);
       return;
     }
 

@@ -103,7 +103,7 @@ function assertNoCursorShapeSequences(lines: string[]): void {
   }
 }
 
-function setInternalCursor(editor: ModalEditor, cursorCol: number): void {
+function setInternalCursor(editor: ModalEditor, cursorCol: number, cursorLine: number = 0): void {
   const internal = editor as unknown as {
     state?: { cursorLine?: number; cursorCol?: number };
     preferredVisualCol?: number | null;
@@ -115,7 +115,7 @@ function setInternalCursor(editor: ModalEditor, cursorCol: number): void {
     throw new Error("ModalEditor test internal state unavailable");
   }
 
-  internal.state.cursorLine = 0;
+  internal.state.cursorLine = cursorLine;
   internal.state.cursorCol = cursorCol;
   internal.preferredVisualCol = null;
   internal.lastAction = null;
@@ -1671,6 +1671,35 @@ describe("linewise operators and counts", () => {
     assert.equal(editor.getRegister(), "f");
   });
 
+  it("counted yank text objects cancel without mutation or register writes", () => {
+    const scenarios = [
+      { name: "y2aw", keys: ["y", "2", "a", "w"] },
+      { name: "2yaw", keys: ["2", "y", "a", "w"] },
+      { name: "y2aW", keys: ["y", "2", "a", "W"] },
+    ];
+
+    for (const scenario of scenarios) {
+      const { editor } = createEditorWithSpy("foo bar");
+      const beforeCursor = editor.getCursor();
+      editor.setRegister("seed");
+
+      sendKeys(editor, scenario.keys);
+
+      assert.equal(editor.getText(), "foo bar", `${scenario.name} text`);
+      assert.equal(editor.getRegister(), "seed", `${scenario.name} register`);
+      assert.deepEqual(editor.getCursor(), beforeCursor, `${scenario.name} cursor`);
+    }
+  });
+
+  it("normal keys work after counted yank text-object cancellation", () => {
+    const { editor } = createEditorWithSpy("foo bar");
+
+    sendKeys(editor, ["y", "2", "a", "w", "x"]);
+
+    assert.equal(editor.getText(), "oo bar");
+    assert.equal(editor.getRegister(), "f");
+  });
+
   it("2d0 does not swallow 0 as a second count", () => {
     const { editor } = createEditorWithSpy("foo bar");
 
@@ -2366,6 +2395,161 @@ describe("WORD text objects — iW / aW", () => {
 
     assert.equal(editor.getRegister(), "foo/path");
     assert.equal(editor.getText(), "\nbar/baz");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Quote text objects — i\" / a\" / i' / a' / i` / a` with d/c/y
+// ---------------------------------------------------------------------------
+
+describe("quote text objects", () => {
+  it("supports double-quote text objects on the current quoted string", () => {
+    const scenarios = [
+      {
+        name: "ci\"",
+        keys: ["c", "i", "\""],
+        expectedText: "say \"\" now",
+        expectedRegister: "hello",
+        expectedMode: "insert",
+        expectedCursor: { line: 0, col: 5 },
+      },
+      {
+        name: "di\"",
+        keys: ["d", "i", "\""],
+        expectedText: "say \"\" now",
+        expectedRegister: "hello",
+        expectedMode: "normal",
+        expectedCursor: { line: 0, col: 5 },
+      },
+      {
+        name: "yi\"",
+        keys: ["y", "i", "\""],
+        expectedText: "say \"hello\" now",
+        expectedRegister: "hello",
+        expectedMode: "normal",
+        expectedCursor: { line: 0, col: 6 },
+      },
+      {
+        name: "ca\"",
+        keys: ["c", "a", "\""],
+        expectedText: "say  now",
+        expectedRegister: "\"hello\"",
+        expectedMode: "insert",
+        expectedCursor: { line: 0, col: 4 },
+      },
+    ];
+
+    for (const scenario of scenarios) {
+      const { editor } = createEditorWithSpy("say \"hello\" now");
+      setInternalCursor(editor, 6);
+
+      sendKeys(editor, scenario.keys);
+
+      assert.equal(editor.getText(), scenario.expectedText, `${scenario.name} text`);
+      assert.equal(editor.getRegister(), scenario.expectedRegister, `${scenario.name} register`);
+      assert.equal(editor.getMode(), scenario.expectedMode, `${scenario.name} mode`);
+      assert.deepEqual(editor.getCursor(), scenario.expectedCursor, `${scenario.name} cursor`);
+    }
+  });
+
+  it("supports single quotes and backticks", () => {
+    const scenarios = [
+      {
+        name: "single quotes",
+        initial: "say 'hello' now",
+        keys: ["d", "i", "'"],
+        expectedText: "say '' now",
+      },
+      {
+        name: "backticks",
+        initial: "say `hello` now",
+        keys: ["y", "i", "`"],
+        expectedText: "say `hello` now",
+      },
+    ];
+
+    for (const scenario of scenarios) {
+      const { editor } = createEditorWithSpy(scenario.initial);
+      setInternalCursor(editor, 6);
+
+      sendKeys(editor, scenario.keys);
+
+      assert.equal(editor.getText(), scenario.expectedText, `${scenario.name} text`);
+      assert.equal(editor.getRegister(), "hello", `${scenario.name} register`);
+    }
+  });
+
+  it("ignores escaped quote delimiters", () => {
+    const initial = String.raw`say \"not\" "yes" now`;
+    const { editor } = createEditorWithSpy(initial);
+
+    setInternalCursor(editor, 14);
+    sendKeys(editor, ["d", "i", "\""]);
+
+    assert.equal(editor.getText(), String.raw`say \"not\" "" now`);
+    assert.equal(editor.getRegister(), "yes");
+  });
+
+  it("does not pair quotes across logical lines", () => {
+    const initial = "say \"hello\nworld\" now";
+    const { editor } = createMultiLineEditor(initial);
+    const beforeCursor = { line: 0, col: 5 };
+    editor.setRegister("seed");
+
+    setInternalCursor(editor, beforeCursor.col, beforeCursor.line);
+    sendKeys(editor, ["d", "i", "\""]);
+
+    assert.equal(editor.getText(), initial);
+    assert.equal(editor.getRegister(), "seed");
+    assert.deepEqual(editor.getCursor(), beforeCursor);
+  });
+
+  it("empty inner quotes no-op for delete and yank", () => {
+    const scenarios = [
+      { name: "delete", keys: ["d", "i", "\""] },
+      { name: "yank", keys: ["y", "i", "\""] },
+    ];
+
+    for (const scenario of scenarios) {
+      const { editor } = createEditorWithSpy("say \"\" now");
+      const beforeCursor = { line: 0, col: 4 };
+      editor.setRegister("seed");
+
+      setInternalCursor(editor, beforeCursor.col, beforeCursor.line);
+      sendKeys(editor, scenario.keys);
+
+      assert.equal(editor.getText(), "say \"\" now", `${scenario.name} text`);
+      assert.equal(editor.getRegister(), "seed", `${scenario.name} register`);
+      assert.deepEqual(editor.getCursor(), beforeCursor, `${scenario.name} cursor`);
+      assert.equal(editor.getMode(), "normal", `${scenario.name} mode`);
+    }
+  });
+
+  it("empty inner quote change enters insert at the inner start", () => {
+    const { editor } = createEditorWithSpy("say \"\" now");
+    editor.setRegister("seed");
+
+    setInternalCursor(editor, 4);
+    sendKeys(editor, ["c", "i", "\""]);
+
+    assert.equal(editor.getText(), "say \"\" now");
+    assert.equal(editor.getRegister(), "seed");
+    assert.equal(editor.getMode(), "insert");
+    assert.deepEqual(editor.getCursor(), { line: 0, col: 5 });
+  });
+
+  it("counted quote text objects cancel without mutation or register writes", () => {
+    const { editor } = createEditorWithSpy("say \"hello\" now");
+    const beforeCursor = { line: 0, col: 6 };
+    editor.setRegister("seed");
+
+    setInternalCursor(editor, beforeCursor.col, beforeCursor.line);
+    sendKeys(editor, ["d", "2", "i", "\""]);
+
+    assert.equal(editor.getText(), "say \"hello\" now");
+    assert.equal(editor.getRegister(), "seed");
+    assert.deepEqual(editor.getCursor(), beforeCursor);
+    assert.equal(editor.getMode(), "normal");
   });
 });
 
