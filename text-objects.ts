@@ -83,6 +83,8 @@ function isWhitespace(ch: string | undefined): boolean {
 
 function pairKind(ch?:string):MatchingPairKind|null{return ch==="("||ch===")"?"()":ch==="["||ch==="]"?"[]":ch==="{"||ch==="}"?"{}":null;}
 
+function scanSameDelimiterPairs(text:string,open:string,close:string,onPair:(openAbs:number,closeAbs:number)=>number|null):number|null{const st:number[]=[];for(let i=0;i<text.length;i++){if(text[i]===open)st.push(i);else if(text[i]===close){const o=st.pop();if(o===undefined)continue;const r=onPair(o,i);if(r!==null)return r;}}return null;}
+
 export function normalizeDelimiterKey(key: string): DelimiterSpec | null {
   if (key === '"' || key === "'" || key === "`") {
     return {
@@ -191,31 +193,19 @@ export function resolveBracketObjectRange(
   if (open.length !== 1 || close.length !== 1 || open === close) return null;
 
   const cursor = clampCursorAbs(text, cursorAbs);
-  const openStack: number[] = [];
-  let bestPair: { open: number; close: number } | null = null;
+  let bestPair = null as { open: number; close: number } | null;
 
-  for (let index = 0; index < text.length; index++) {
-    const ch = text[index];
-
-    if (ch === open) {
-      openStack.push(index);
-      continue;
-    }
-
-    if (ch !== close) continue;
-
-    const openIndex = openStack.pop();
-    if (openIndex === undefined) continue;
-
-    if (openIndex <= cursor && cursor <= index) {
+  scanSameDelimiterPairs(text, open, close, (openIndex, closeIndex) => {
+    if (openIndex <= cursor && cursor <= closeIndex) {
       if (
         bestPair === null ||
-        index - openIndex < bestPair.close - bestPair.open
+        closeIndex - openIndex < bestPair.close - bestPair.open
       ) {
-        bestPair = { open: openIndex, close: index };
+        bestPair = { open: openIndex, close: closeIndex };
       }
     }
-  }
+    return null;
+  });
 
   if (bestPair === null) return null;
 
@@ -243,15 +233,8 @@ export function resolveMatchingPairMotionTarget(text: string, c: number, l: numb
     if (pair) s = i;
   }
   if (!pair) return null;
-  const st: number[] = [];
-  for (let i = 0; i < text.length; i++) {
-    if (text[i] === pair[0]) st.push(i);
-    else if (text[i] === pair[1]) {
-      const o = st.pop();
-      if (o === s) return {pair, sourceAbs: s, targetAbs: i, rangeAnchorAbs: a};
-      if (i === s && o !== undefined) return {pair, sourceAbs: s, targetAbs: o, rangeAnchorAbs: a};
-    }
-  }
+  const t = scanSameDelimiterPairs(text, pair[0], pair[1], (o, i) => (o === s ? i : i === s ? o : null));
+  if (t !== null) return {pair, sourceAbs: s, targetAbs: t, rangeAnchorAbs: a};
 
   return null;
 }
