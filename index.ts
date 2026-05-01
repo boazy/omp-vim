@@ -25,6 +25,7 @@ import {
 import { type ModeColorSettings, readPiVimSettings } from "./settings.js";
 import {
   resolveDelimitedTextObjectRange,
+  resolveMatchingPairMotionTarget,
   resolveWordTextObjectRange,
   type TextObjectKind,
   type TextObjectRange,
@@ -1726,6 +1727,12 @@ export class ModalEditor extends CustomEditor {
         return;
       }
 
+      if (data === "%") {
+        this.prefixCount = "";
+        this.operatorCount = "";
+        return;
+      }
+
       if (data === "d" || data === "y") {
         this.pendingOperator = data;
         return;
@@ -1939,6 +1946,10 @@ export class ModalEditor extends CustomEditor {
     }
     if (data === "W") {
       this.moveWord("forward", "start", this.takeTotalCount(1), "WORD");
+      return;
+    }
+    if (data === "%") {
+      this.moveToMatchingPairTarget();
       return;
     }
     if (data === "B") {
@@ -2301,6 +2312,22 @@ export class ModalEditor extends CustomEditor {
   private getAbsoluteIndexFromCursor(): number {
     const cursor = this.getCursor();
     return this.getAbsoluteIndex(cursor.line, cursor.col);
+  }
+
+  private getMatchingPairMotionTarget() {
+    const cursor = this.getCursor();
+    const lineStartAbs = this.getAbsoluteIndex(cursor.line, 0);
+    return resolveMatchingPairMotionTarget(
+      this.getText(),
+      this.getAbsoluteIndexFromCursor(),
+      lineStartAbs,
+      lineStartAbs + (this.getLines()[cursor.line] ?? "").length,
+    );
+  }
+
+  private moveToMatchingPairTarget(): void {
+    const target = this.getMatchingPairMotionTarget();
+    if (target) this.moveCursorToAbsoluteIndex(target.targetAbs);
   }
 
   private getDelimitedTextObjectCursorAbs(): number {
@@ -2827,7 +2854,7 @@ export class ModalEditor extends CustomEditor {
     if (targetCol === null) return;
 
     this.lastCharMotion = { motion, char: targetChar };
-    this.deleteRange(col, targetCol, true); // char motions are inclusive
+    this.deleteRange(col, targetCol, true);
   }
 
   private handlePendingYank(data: string): void {
@@ -2973,7 +3000,7 @@ export class ModalEditor extends CustomEditor {
     if (targetCol === null) return;
 
     this.lastCharMotion = { motion, char: targetChar };
-    this.yankRange(col, targetCol, true); // char motions are inclusive
+    this.yankRange(col, targetCol, true);
   }
 
   private yankRange(col: number, targetCol: number, inclusive: boolean): void {

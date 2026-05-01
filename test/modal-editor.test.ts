@@ -2591,6 +2591,79 @@ describe("paragraph motions — { / }", () => {
   });
 });
 
+describe("matching pair motion", () => {
+  it("% on opening delimiter jumps to closing partner", () => {
+    const { editor } = createEditorWithSpy("foo(bar)");
+
+    sendKeys(editor, ["w", "%"]);
+
+    assert.deepEqual(editor.getCursor(), { line: 0, col: 7 });
+  });
+
+  it("% on closing delimiter jumps to opening partner", () => {
+    const { editor } = createEditorWithSpy("foo(bar)");
+    setInternalCursor(editor, 7);
+
+    sendKeys(editor, ["%"]);
+
+    assert.deepEqual(editor.getCursor(), { line: 0, col: 3 });
+  });
+
+  it("% before a delimiter scans forward and jumps to the partner", () => {
+    const { editor } = createEditorWithSpy("foo (bar)");
+
+    sendKeys(editor, ["%"]);
+
+    assert.deepEqual(editor.getCursor(), { line: 0, col: 8 });
+  });
+
+  it("% with no source delimiter on the current line no-ops", () => {
+    const { editor } = createMultiLineEditor("foo bar\n(baz)");
+
+    sendKeys(editor, ["%"]);
+
+    assert.deepEqual(editor.getCursor(), { line: 0, col: 0 });
+  });
+
+  it("% with an unmatched source delimiter no-ops", () => {
+    const { editor } = createEditorWithSpy("foo(bar");
+    setInternalCursor(editor, 3);
+
+    sendKeys(editor, ["%"]);
+
+    assert.deepEqual(editor.getCursor(), { line: 0, col: 3 });
+  });
+
+  it("% at visible EOL after a closing delimiter jumps to opening partner", () => {
+    const { editor } = createEditorWithSpy("foo(bar)");
+    setInternalCursor(editor, 8);
+
+    sendKeys(editor, ["%"]);
+
+    assert.deepEqual(editor.getCursor(), { line: 0, col: 3 });
+  });
+
+  it("{count}% consumes count without affecting the next key", () => {
+    const { editor } = createEditorWithSpy("abcdef");
+
+    sendKeys(editor, ["3", "%", "x"]);
+
+    assert.equal(editor.getText(), "bcdef");
+    assert.equal(editor.getRegister(), "a");
+  });
+
+  it("no-op % preserves buffer text and unnamed register", () => {
+    const { editor } = createEditorWithSpy("foo bar");
+    editor.setRegister("seed");
+
+    sendKeys(editor, ["%"]);
+
+    assert.equal(editor.getText(), "foo bar");
+    assert.equal(editor.getRegister(), "seed");
+    assert.deepEqual(editor.getCursor(), { line: 0, col: 0 });
+  });
+});
+
 describe("J — join lines", () => {
   it("J joins current line with next, inserts separator space", () => {
     const { editor } = createMultiLineEditor("foo\nbar");
