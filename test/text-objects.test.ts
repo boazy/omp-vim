@@ -206,6 +206,18 @@ describe("resolveMatchingPairMotionTarget", () => {
       targetAbs: 5,
       rangeAnchorAbs: 3,
     });
+    assert.deepEqual(resolveMatchingPairAt(text, 5), {
+      pair: "()",
+      sourceAbs: 5,
+      targetAbs: 3,
+      rangeAnchorAbs: 5,
+    });
+    assert.deepEqual(resolveMatchingPairAt(text, 7), {
+      pair: "()",
+      sourceAbs: 7,
+      targetAbs: 1,
+      rangeAnchorAbs: 7,
+    });
   });
 
   it("resolves cross-line partners", () => {
@@ -216,6 +228,17 @@ describe("resolveMatchingPairMotionTarget", () => {
       sourceAbs: 2,
       targetAbs: 8,
       rangeAnchorAbs: 2,
+    });
+  });
+
+  it("resolves a cross-line partner after line-local source selection", () => {
+    const text = "call (\n  value\n)";
+
+    assert.deepEqual(resolveMatchingPairAt(text, 0), {
+      pair: "()",
+      sourceAbs: 5,
+      targetAbs: 15,
+      rangeAnchorAbs: 0,
     });
   });
 
@@ -254,6 +277,18 @@ describe("resolveMatchingPairMotionTarget", () => {
       sourceAbs: 4,
       targetAbs: stringCloseParen,
       rangeAnchorAbs: 4,
+    });
+  });
+
+  it("counts delimiters inside comments lexically", () => {
+    const text = "fn(/* ) comment */ value)";
+    const commentCloseParen = text.indexOf(")");
+
+    assert.deepEqual(resolveMatchingPairAt(text, 2), {
+      pair: "()",
+      sourceAbs: 2,
+      targetAbs: commentCloseParen,
+      rangeAnchorAbs: 2,
     });
   });
 
@@ -308,6 +343,18 @@ describe("resolveMatchingPairMotionTarget", () => {
       sourceAbs: targetStartAbs,
       targetAbs: targetStartAbs + target.length - 1,
       rangeAnchorAbs: targetStartAbs,
+    });
+  });
+
+  it("resolves in a deeply nested buffer with stack-depth storage", () => {
+    const depth = 2_000;
+    const text = `${"(".repeat(depth)}leaf${")".repeat(depth)}`;
+
+    assert.deepEqual(resolveMatchingPairAt(text, 0), {
+      pair: "()",
+      sourceAbs: 0,
+      targetAbs: text.length - 1,
+      rangeAnchorAbs: 0,
     });
   });
 });
