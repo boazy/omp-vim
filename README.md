@@ -305,6 +305,14 @@ Paste text ending in `\n` is treated as line-wise.
 - While a mirror is in flight, `p` / `P` use the shadow so immediate yank/delete → put stays ordered.
 - Pi owns the terminal clipboard backends; on Wayland external state may lag while the shadow stays authoritative for immediate puts.
 
+## composability with other custom-editor extensions
+
+Pi 0.71+ exposes [`ctx.ui.getEditorComponent()`](https://github.com/badlogic/pi-mono/issues/3935), which lets extensions wrap a previously installed custom editor instead of replacing it. pi-vim opts in: when another extension (for example, [`@jordyvd/pi-image-attachments`](https://www.npmjs.com/package/@jordyvd/pi-image-attachments)) has already installed a custom editor, pi-vim builds its `ModalEditor` as a subclass of that extension's class rather than the default `CustomEditor`.
+
+Practically: load order in `settings.json` no longer determines which extension wins. Whichever extension runs `session_start` first becomes the inner editor, and pi-vim wraps it.
+
+Extension authors composing on top of pi-vim should call `createModalEditor(Base)` (exported from this package) to get a `ModalEditor` subclass that extends `Base` instead of the default `CustomEditor`.
+
 ---
 
 ## known differences from full Vim

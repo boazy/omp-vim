@@ -640,7 +640,8 @@ describe("ex mini-mode", () => {
 
   it("renders EX labels with the EX-specific colorizer", () => {
     const calls: string[] = [];
-    const editor = new ModalEditor(stubTui, stubTheme, stubKeybindings, {
+    const editor = new ModalEditor(stubTui, stubTheme, stubKeybindings);
+    editor.setColorizers({
       insert: (s: string) => {
         calls.push(`insert:${s}`);
         return `\x1b[32m${s}\x1b[39m`;
@@ -995,6 +996,69 @@ describe("cursor shape lifecycle", () => {
 
     assert.deepEqual(tui.terminalWrites, []);
     assert.deepEqual(tui.hardwareCursorValues, []);
+  });
+});
+
+describe("composable editor factory (#3935)", () => {
+  it("wraps a previously installed editor by subclassing its class", async () => {
+    // Simulate another extension having already installed its own custom editor.
+    class PreviousEditor {
+      previousMarker = true;
+    }
+
+    const pi = createExtensionApiHarness();
+    let editorFactory: EditorFactory | null = null;
+    let previousProbeCount = 0;
+
+    const ctx = {
+      cwd: process.cwd(),
+      hasUI: true,
+      ui: {
+        theme: stubTheme,
+        setEditorComponent(factory: EditorFactory): void {
+          editorFactory = factory;
+        },
+        getEditorComponent(): EditorFactory | undefined {
+          // Pretend a prior extension's factory was installed.
+          return (() => {
+            previousProbeCount += 1;
+            return new PreviousEditor() as unknown as ModalEditor;
+          }) as unknown as EditorFactory;
+        },
+        notify(): void {},
+      },
+      shutdown(): void {},
+    };
+
+    installPiVim(pi);
+    await pi.emit("session_start", undefined, ctx);
+
+    const factory = editorFactory as EditorFactory | null;
+    assert.ok(factory, "expected session_start to install an editor factory");
+    const editor = factory(stubTui, stubTheme, stubKeybindings);
+
+    // The mounted editor should be an instance of the previously-installed class —
+    // proving pi-vim wrapped it rather than replacing it.
+    assert.equal(editor instanceof PreviousEditor, true,
+      "composed editor should extend the previously installed editor class");
+    assert.equal((editor as unknown as { previousMarker: boolean }).previousMarker, true);
+
+    // It should also be a usable ModalEditor: its modal-editor methods are present.
+    assert.equal(typeof editor.handleInput, "function");
+    assert.equal(typeof editor.getMode, "function");
+    assert.equal(editor.getMode(), "insert");
+
+    // Probe was called exactly once during installation — not on every keystroke.
+    assert.equal(previousProbeCount, 1);
+  });
+
+  it("falls back to the canonical ModalEditor when no previous factory exists", async () => {
+    const extension = await installExtensionWithEditorFactory();
+    const editor = extension.editorFactory(stubTui, stubTheme, stubKeybindings);
+
+    // With no chain, the canonical class is used so `instanceof ModalEditor` works
+    // for callers that rely on identity.
+    assert.equal(editor instanceof ModalEditor, true);
   });
 });
 

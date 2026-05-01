@@ -96,7 +96,6 @@ type ModalEditorInternals = {
   setCursorCol?: (col: number) => void;
 };
 
-type CustomEditorConstructorArgs = ConstructorParameters<typeof CustomEditor>;
 type ClipboardWriteFn = (text: string, signal: AbortSignal) => Promise<void>;
 type ClipboardReadFn = () => string | null;
 type ClipboardProcess = ReturnType<typeof spawn>;
@@ -528,7 +527,21 @@ class ClipboardMirror {
   }
 }
 
-export class ModalEditor extends CustomEditor {
+// TypeScript class-mixin pattern requires `any[]` for the constructor's rest args
+// so super(...args) accepts whatever the base constructor expects.
+// biome-ignore lint/suspicious/noExplicitAny: see comment above
+type CustomEditorConstructor = new (...args: any[]) => CustomEditor;
+
+/**
+ * Class factory that produces a ModalEditor subclass extending the provided
+ * base class. Pass `CustomEditor` for the standalone case, or another extension's
+ * editor class to compose vim modal editing on top of it.
+ *
+ * See https://github.com/badlogic/pi-mono/issues/3935 for the composability
+ * contract that this opt-in supports.
+ */
+export function createModalEditor<TBase extends CustomEditorConstructor>(Base: TBase) {
+  return class ModalEditor extends Base {
   private mode: Mode = "insert";
   private pendingMotion: PendingMotion = null;
   private pendingTextObject: TextObjectKind | null = null;
@@ -548,7 +561,7 @@ export class ModalEditor extends CustomEditor {
   private readonly redoStack: EditorSnapshot[] = [];
   private currentTransition: TransitionState = "none";
   private onChangeHooked: boolean = false;
-  private readonly labelColorizers: ModeLabelColorizers | null;
+  private labelColorizers: ModeLabelColorizers | null = null;
   private readonly cursorShapeRuntime: CursorShapeRuntime | null;
   private lastCursorShapeSequence: CursorShapeSequence | null = null;
 
@@ -560,15 +573,14 @@ export class ModalEditor extends CustomEditor {
   private quitFn: () => void = () => {};
   private notifyFn: (message: string) => void = () => {};
 
-  constructor(
-    tui: CustomEditorConstructorArgs[0],
-    theme: CustomEditorConstructorArgs[1],
-    kb: CustomEditorConstructorArgs[2],
-    labelColorizers?: ModeLabelColorizers | null,
-  ) {
-    super(tui, theme, kb);
-    this.cursorShapeRuntime = getCursorShapeRuntime(tui);
-    this.labelColorizers = labelColorizers ?? null;
+  // biome-ignore lint/suspicious/noExplicitAny: rest-args passthrough for the mixin pattern.
+  constructor(...args: any[]) {
+    super(...args);
+    this.cursorShapeRuntime = getCursorShapeRuntime(args[0]);
+  }
+
+  setColorizers(colorizers: ModeLabelColorizers | null): void {
+    this.labelColorizers = colorizers ?? null;
   }
 
   // Test seams
@@ -3061,7 +3073,13 @@ export class ModalEditor extends CustomEditor {
     if (count) return ` NORMAL ${count}_ `;
     return " NORMAL ";
   }
+  };
 }
+
+// Default class form, equivalent to the previous `class ModalEditor extends CustomEditor`.
+// Re-exported for backwards compatibility with consumers that import `ModalEditor` directly.
+export const ModalEditor = createModalEditor(CustomEditor);
+export type ModalEditor = InstanceType<typeof ModalEditor>;
 
 export default function (pi: ExtensionAPI) {
   let cursorShapeCleanup: CursorShapeCleanup | null = null;
@@ -3080,9 +3098,31 @@ export default function (pi: ExtensionAPI) {
       normal: (s: string) => t.fg("borderAccent", reverseVideo(s)),
       ex: (s: string) => t.fg("warning", reverseVideo(s)),
     } : null;
+    // Composability: if a previous extension installed a custom editor, build the modal
+    // editor as a subclass of that extension's class so its overrides remain in the chain.
+    // See https://github.com/badlogic/pi-mono/issues/3935
+    const previous = ctx.ui.getEditorComponent?.();
+
     ctx.ui.setEditorComponent((tui, theme, kb) => {
       cursorShapeCleanup = enableCursorShapeSupport(tui);
-      const editor = new ModalEditor(tui, theme, kb, colorizers);
+
+      let Base: CustomEditorConstructor = CustomEditor;
+      if (previous) {
+        // Probe the previous factory once to obtain its class. The probe instance is
+        // discarded; the actual editor is constructed below via `new Composed(...)`,
+        // which fires each constructor in the chain exactly once for the mounted instance.
+        const probe = previous(tui, theme, kb);
+        const probeCtor = probe?.constructor;
+        if (typeof probeCtor === "function") {
+          Base = probeCtor as CustomEditorConstructor;
+        }
+      }
+
+      // Preserve `instanceof ModalEditor` for the common standalone case by reusing
+      // the canonical class when no other extension is present in the chain.
+      const Composed = previous ? createModalEditor(Base) : ModalEditor;
+      const editor = new Composed(tui, theme, kb);
+      editor.setColorizers(colorizers);
       editor.setClipboardMirrorPolicy(clipboardMirrorPolicy.policy);
       editor.setQuitFn(() => ctx.shutdown());
       editor.setNotifyFn((message) => ctx.ui.notify(message, "warning"));

@@ -62,9 +62,10 @@ const FORBIDDEN_REGEX_BY_GLOB: Record<(typeof FORBIDDEN_GLOBS)[number], RegExp> 
 const THRESHOLDS = {
   maxFiles: 12,
   // WORD/delimited text objects add a packaged resolver module plus README surface.
-  // Keep budgets tight enough to catch accidental docs/tests in the package.
-  maxSize: 31000,
-  maxUnpackedSize: 136000,
+  // Composable editor factory (#3935) adds the createModalEditor mixin wrapper and a
+  // README section. Keep budgets tight enough to catch accidental docs/tests in the package.
+  maxSize: 32000,
+  maxUnpackedSize: 140000,
 } as const;
 
 function compareStrings(a: string, b: string): number {
