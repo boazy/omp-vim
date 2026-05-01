@@ -65,7 +65,7 @@ npm run hooks:install
 
 ## stats
 
-- **188 commands**: motions, operators, counts, text objects, undo/redo, ex quit
+- **192 commands**: motions, operators, counts, text objects, undo/redo, ex quit
 - **sub-µs word motions** via precomputed boundary cache (~4ms startup, ~150KB memory)
 - **0 dependencies**
 
@@ -93,13 +93,12 @@ Requires `@mariozechner/pi-tui >= 0.47.0`. With `pi-tui >= 0.49.3` and DECSCUSR 
 - REPL-focused defaults; out-of-scope boundaries documented.
 - Clipboard/register behavior is explicit and tested.
 
-Use pi-vim for fast Vim muscle-memory in Pi prompts. Skip it if you need
-full Vim parity (visual mode, macros, search, extended ex-commands, …).
+Use pi-vim for Vim muscle-memory in Pi prompts. Skip it if you need full Vim parity (visual mode, macros, search, extended ex-commands, …).
 
 ## common recipes
 
 | goal | keys |
-|------|------|
+|---|---|
 | Jump to exact line 25 | `25gg` (or `25G`) |
 | Delete two words | `2dw` |
 | Change current whitespace-delimited WORD | `ciW` |
@@ -121,19 +120,19 @@ full Vim parity (visual mode, macros, search, extended ex-commands, …).
 
 ### mode switching
 
-| key      | action                                 |
-|----------|----------------------------------------|
-| `Esc` / `Ctrl+[` | Insert → Normal mode                   |
+| key | action |
+|---|---|
+| `Esc` / `Ctrl+[` | Insert → Normal mode |
 | `Esc` / `Ctrl+[` | Normal mode → pass to Pi (aborts the agent under default Pi keybindings) |
-| `:`      | Normal → EX mini-mode                   |
-| `i`      | Normal → Insert at cursor              |
-| `a`      | Normal → Insert after cursor           |
-| `I`      | Normal → Insert at first non-whitespace |
-| `A`      | Normal → Insert at line end            |
-| `o`      | Normal → open line below + Insert      |
-| `O`      | Normal → open line above + Insert      |
+| `:` | Normal → EX mini-mode |
+| `i` | Normal → Insert at cursor |
+| `a` | Normal → Insert after cursor |
+| `I` | Normal → Insert at first non-whitespace |
+| `A` | Normal → Insert at line end |
+| `o` | Normal → open line below + Insert |
+| `O` | Normal → open line above + Insert |
 
-Optional: heavy users may want to move Pi's `app.interrupt` off bare `escape` in `~/.pi/agent/keybindings.json` since it overlaps with Insert→Normal. Pick your own replacement; user config overrides defaults.
+Optional: move Pi's `app.interrupt` off bare `escape` in `~/.pi/agent/keybindings.json` if it overlaps with Insert→Normal; user config wins.
 
 #### ex mini-mode
 
@@ -153,29 +152,32 @@ Quit-only ex flows.
 
 Insert-mode shortcuts (stay in Insert mode):
 
-| key             | action                 |
-|-----------------|------------------------|
-| `Shift+Alt+A`   | Go to end of line      |
-| `Shift+Alt+I`   | Go to start of line    |
-| `Alt+o`         | Open line below        |
-| `Alt+Shift+O`   | Open line above        |
+| key | action |
+|---|---|
+| `Shift+Alt+A` | Go to end of line |
+| `Shift+Alt+I` | Go to start of line |
+| `Alt+o` | Open line below |
+| `Alt+Shift+O` | Open line above |
 
 ---
 
 ### navigation (normal mode)
 
-A `{count}` prefix can be prepended to navigation keys (max: `9999`).
+Most navigation keys accept a `{count}` prefix (max: `9999`); `%` intentionally does not.
 
 | key | action |
-|-----|--------|
+|---|---|
 | `h` / `l` / `j` / `k`; `{count}h/l/j/k` | Move left/right/down/up; line moves clamp to the buffer |
 | `0` / `^` / `_` / `$` | Line start / first non-whitespace / counted first non-whitespace / line end |
 | `gg` / `G`; `{count}gg` / `{count}G` | Buffer start/end or absolute 1-indexed line |
 | `w` / `b` / `e`; `{count}w/b/e` | `word` start/back/end motions |
 | `W` / `B` / `E`; `{count}W/B/E` | whitespace-delimited `WORD` motions |
 | `{` / `}`; `{count}{` / `{count}}` | Previous/next paragraph start |
+| `%` | Jump to the matching `()`, `[]`, or `{}` partner |
 
 `word` splits punctuation from keyword chars; `WORD` treats any non-whitespace run as one token (`foo-bar`, `path/to`). Paragraph starts are non-blank lines at BOF or after blank lines (`^\s*$`). `{` / `}` are navigation-only; brace operator forms (`d{`, `c}`, `y{`, …) are out of scope.
+
+`%` uses a delimiter under the cursor or scans forward on the current logical line. It matches `()`, `[]`, `{}` buffer-wide with lexical, nested, same-delimiter, parser-unaware matching; quotes/comments and mixed delimiters are not special. Missing/unmatched sources no-op. Counts are unsupported: `{count}%` consumes the count and no-ops; counted `d%` / `y%` / `c%` cancel without writes.
 
 ---
 
@@ -183,15 +185,15 @@ A `{count}` prefix can be prepended to navigation keys (max: `9999`).
 
 A `{count}` prefix finds the Nth occurrence of `{char}` on the line.
 
-| key              | action                                         |
-|------------------|------------------------------------------------|
-| `f{char}`        | Jump forward to `char` (inclusive)             |
-| `F{char}`        | Jump backward to `char` (inclusive)            |
-| `t{char}`        | Jump forward to one before `char` (exclusive)  |
-| `T{char}`        | Jump backward to one after `char` (exclusive)  |
-| `{count}f{char}` | Jump to Nth occurrence of `char` forward       |
-| `;`              | Repeat last `f/F/t/T` motion                   |
-| `,`              | Repeat last motion in reverse direction         |
+| key | action |
+|---|---|
+| `f{char}` | Jump forward to `char` (inclusive) |
+| `F{char}` | Jump backward to `char` (inclusive) |
+| `t{char}` | Jump forward to one before `char` (exclusive) |
+| `T{char}` | Jump backward to one after `char` (exclusive) |
+| `{count}f{char}` | Jump to Nth occurrence of `char` forward |
+| `;` | Repeat last `f/F/t/T` motion |
+| `,` | Repeat last motion in reverse direction |
 
 Char-find motions compose with operators: `df{char}`, `ct{char}`, `d{count}t{char}`, etc.
 
@@ -206,7 +208,7 @@ Register-writing edits write to the unnamed register. With the default clipboard
 Text objects compose as `d`/`c`/`y` + `i`/`a` + object. `i` means inner; `a` means around.
 
 | object | keys | range |
-|--------|------|-------|
+|---|---|---|
 | word | `iw` / `aw` | Keyword word; `aw` includes spaces |
 | WORD | `iW` / `aW` | Line-local whitespace-delimited WORD; `aW` includes adjacent whitespace |
 | quotes | `i"` / `a"`, `i'` / `a'`, <code>i`</code> / <code>a`</code> | Smallest containing quote pair on the line |
@@ -227,12 +229,13 @@ A `{count}` or dual-count prefix (`{pfx}d{op}{motion}`) is supported for word,
 WORD, char-find, and linewise motions. Maximum total count: `9999`.
 
 | command | deletes |
-|---------|---------|
+|---|---|
 | `dw` / `de` / `db`; `dW` / `dE` / `dB` | word/WORD motion ranges; `{count}` repeats |
 | `d$` / `d0` / `d^` | To EOL / BOL / first non-whitespace |
 | `d_` / `dd`; `d{count}_` / `{count}dd` | Current or counted whole lines |
 | `d{count}j` / `d{count}k` / `dG` | Linewise down/up/to EOF |
 | `df{c}` / `dt{c}` / `dF{c}` / `dT{c}`; `d{count}f{c}` | Char-find ranges |
+| `d%` | Inclusive range through the matching pair target |
 | `diw` / `daw`; `diW` / `daW` | Inner/around word or WORD |
 | `d{count}iw` / `d{count}iW`; `d{count}aw` / `d{count}aW` | Counted word/WORD text objects |
 | `di"` / `da"` (`'`, <code>`</code>) | Inside/around quotes |
@@ -243,7 +246,7 @@ WORD, char-find, and linewise motions. Maximum total count: `9999`.
 Same motion and count set as `d`. Deletes text then enters Insert mode.
 
 | command | action |
-|---------|--------|
+|---|---|
 | `cw` / `ce` / `cb`; `cW` / `cE` / `cB` | Change word/WORD motion ranges + Insert |
 | `c{count}w/e/b`; `c{count}W/E/B` | Change counted word/WORD motions + Insert |
 | `ciw` / `caw`; `ciW` / `caW` | Change word/WORD text objects + Insert |
@@ -252,22 +255,23 @@ Same motion and count set as `d`. Deletes text then enters Insert mode.
 | `ci(` / `ca(`, `ci[` / `ca[`, `ci{` / `ca{` | Change inside/around brackets + Insert |
 | `cc` / `c_`; `c{count}_` | Change current or counted whole lines + Insert |
 | `c$` / `c0` / `c^` | Delete to EOL / BOL / first non-whitespace + Insert |
+| `c%` | Change inclusive range through the matching pair target + Insert |
 | … | All `d` motions apply |
 
 #### single-key edits
 
 A `{count}` prefix is supported for `x`, `p`, `P`. Maximum: `9999`.
 
-| key          | action                                                        |
-|--------------|---------------------------------------------------------------|
-| `x`          | Delete char under cursor (no-op at/past EOL)                  |
-| `{count}x`   | Delete `{count}` chars                                        |
-| `s`          | Delete char under cursor + Insert mode                        |
-| `S`          | Delete line content + Insert mode                             |
-| `D`          | Delete cursor to EOL (captures `\n` if at EOL with next line) |
-| `C`          | Delete cursor to EOL + Insert mode                            |
-| `r{char}`    | Replace char under cursor with `{char}` (stays in Normal)     |
-| `{count}r{char}` | Replace next `{count}` chars with `{char}`               |
+| key | action |
+|---|---|
+| `x` | Delete char under cursor (no-op at/past EOL) |
+| `{count}x` | Delete `{count}` chars |
+| `s` | Delete char under cursor + Insert mode |
+| `S` | Delete line content + Insert mode |
+| `D` | Delete cursor to EOL (captures `\n` if at EOL with next line) |
+| `C` | Delete cursor to EOL + Insert mode |
+| `r{char}` | Replace char under cursor with `{char}` (stays in Normal) |
+| `{count}r{char}` | Replace next `{count}` chars with `{char}` |
 
 ---
 
@@ -276,11 +280,12 @@ A `{count}` prefix is supported for `x`, `p`, `P`. Maximum: `9999`.
 Same motion set as `d`. Writes to register, **no text mutation**.
 
 | command | yanks |
-|---------|-------|
+|---|---|
 | `yy` / `Y`; `{count}yy` / `{count}Y` | Whole line(s) + trailing `\n` |
 | `y{count}j` / `y{count}k` / `yG`; `y_` / `y{count}_` | Linewise ranges |
 | `yw` / `ye` / `yb`; `yW` / `yE` / `yB` | word/WORD motion ranges |
 | `y$` / `y0` / `y^`; `yf{c}` | EOL / BOL / first non-whitespace / char-find |
+| `y%` | Inclusive range through the matching pair target |
 | `yiw` / `yaw`; `yiW` / `yaW` | Inner/around word or WORD |
 | `yi"` / `ya"` (`'`, <code>`</code>) | Inside/around quotes |
 | `yi(` / `ya(`, `yi[` / `ya[`, `yi{` / `ya{` | Inside/around brackets; aliases `)`, `]`, `}`, `b`, `B` |
@@ -294,12 +299,12 @@ implemented and cancel the pending operator. Linewise counted yank (`{count}yy`,
 
 ### put / paste
 
-| key          | action                                                      |
-|--------------|-------------------------------------------------------------|
-| `p`          | Put after cursor (char-wise) / new line below (line-wise)   |
-| `P`          | Put before cursor (char-wise) / new line above (line-wise)  |
-| `{count}p`   | Put `{count}` times after cursor                            |
-| `{count}P`   | Put `{count}` times before cursor                           |
+| key | action |
+|---|---|
+| `p` | Put after cursor (char-wise) / new line below (line-wise) |
+| `P` | Put before cursor (char-wise) / new line above (line-wise) |
+| `{count}p` | Put `{count}` times after cursor |
+| `{count}P` | Put `{count}` times before cursor |
 
 Put reads the OS clipboard first unless the last local register write was not mirrored. Paste text ending in `\n` is line-wise.
 
@@ -333,13 +338,14 @@ Put reads the OS clipboard first unless the last local register write was not mi
 ## known differences from full Vim
 
 | area | this extension | full Vim |
-|------|----------------|----------|
+|---|---|---|
 | `$` motion | Moves past the last char (readline `Ctrl+E`) | Moves to the last char |
 | `w` / `e` / `b` + `W` / `E` / `B` | Cross-line for both `word` and `WORD` motions | Cross-line |
 | `0` / `$` operators | Exclusive of the anchor col | `0` is inclusive of col 0 |
 | Undo / redo | Delegates undo to readline; normal-mode `<C-r>` redo is supported | Full per-change undo tree |
 | Visual mode | Not implemented | `v`, `V`, `<C-v>` |
 | Text objects | `iw` / `aw`, `iW` / `aW`, quote objects, and paren/bracket/brace objects; delimited counts cancel | Full text-object set |
+| `%` matching | `()`, `[]`, `{}` only; lexical same-delimiter matching with no counts, quote/angle matching, parser/matchit logic, mixed-delimiter validation, or Visual `%` yet | Also supports percentage jumps and broader matching |
 | Count prefix | Operators, motions, navigation, `x`, `r`, `p`, `P`; capped at `MAX_COUNT=9999` | Full support |
 | Registers / macros / search | Not implemented | Supported |
 | Ex commands | Quit-only EX mini-mode (`:q`, `:q!`, `:qa`, `:qa!`) | Full ex command-line surface |
@@ -351,18 +357,18 @@ Put reads the OS clipboard first unless the last local register write was not mi
 
 Explicitly deferred:
 
-- Visual modes (`v`, `V`, block visual)
+- Visual modes (`v`, `V`, block visual), including Visual `%`
 - Tag text objects (`it`, `at`)
 - Paragraph/sentence text objects (`ip`, `ap`, `is`, `as`)
-- Angle bracket text objects (`i<`, `a<`)
+- Angle bracket text objects (`i<`, `a<`) or `%` matching
 - Visual-mode text-object selection
-- Parser-aware delimiter matching
+- Quote matching via `%`, parser-aware delimiter matching, matchit-style matching, and mixed-delimiter structural validation
 - Delimited-object counts (`d2i"`, `2ci(`, `y2a{`)
 - Named registers (`"a`, `"b`, …), macros (`q{char}`, `@{char}`)
 - Ex surface beyond quit (`:s`, `:g`, `:w`, `:r`, …)
 - Search (`/`, `?`, `n`, `N`), repeat (`.`)
 - Replace mode (`R`) — only `r{char}` is supported
-- Count prefix beyond currently supported motions
+- Count prefix beyond currently supported motions, including `{count}%` percent-of-file jumps
 - No insert-mode `<C-r>` expansion, no cross-session redo persistence
 - No upstream `pi-tui` redo prerequisite
 - Window / tab / buffer management, plugin ecosystem compatibility
@@ -371,15 +377,6 @@ Explicitly deferred:
 
 ## architecture notes
 
-- `index.ts` — `ModalEditor` subclass of `CustomEditor`; all key handling.
-- `motions.ts` — pure motion calculation helpers (`findWordMotionTarget`,
-  `findCharMotionTarget`); no side effects.
-- `types.ts` — shared types and escape-sequence constants.
-- `test/` — Node test runner suite; no browser / full runtime required.
+- `index.ts` handles modal keys; `motions.ts` and `text-objects.ts` hold pure range logic; `types.ts` holds shared types/constants; `test/` uses Node's runner.
 
-Run checks:
-
-```
-cd pi-vim
-npm run check
-```
+Run checks with `npm run check`.
