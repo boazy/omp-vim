@@ -705,8 +705,12 @@ export function createModalEditor<TBase extends CustomEditorConstructor>(Base: T
     return state as { lines: string[]; cursorLine?: number; cursorCol?: number };
   }
 
+  private primitiveEditor(): ModalEditorInternals {
+    return (this.insertDelegate ?? this) as unknown as ModalEditorInternals;
+  }
+
   private restoreSnapshot(snapshot: EditorSnapshot): void {
-    const editor = this as unknown as ModalEditorInternals;
+    const editor = this.primitiveEditor();
     const state = this.requireRedoRestoreState(editor);
 
     const lines = snapshot.text.split("\n");
@@ -758,7 +762,7 @@ export function createModalEditor<TBase extends CustomEditorConstructor>(Base: T
       let changed = false;
       this.withTransition("undo", () => {
         const beforeUndo = this.captureSnapshot();
-        super.handleInput(CTRL_UNDERSCORE);
+        this.applyEditorPrimitive(CTRL_UNDERSCORE);
         const afterUndo = this.captureSnapshot();
 
         if (this.snapshotChanged(beforeUndo, afterUndo)) {
@@ -772,7 +776,7 @@ export function createModalEditor<TBase extends CustomEditorConstructor>(Base: T
 
   private performRedo(count: number = this.takeTotalCount(1)): void {
     const maxSteps = Math.max(1, Math.min(MAX_COUNT, count));
-    const editor = this as unknown as ModalEditorInternals;
+    const editor = this.primitiveEditor();
 
     for (let i = 0; i < maxSteps; i++) {
       const snapshot = this.redoStack[this.redoStack.length - 1];
@@ -821,7 +825,7 @@ export function createModalEditor<TBase extends CustomEditorConstructor>(Base: T
   }
 
   private applySyntheticEdit(mutation: () => void): void {
-    const editor = this as unknown as ModalEditorInternals;
+    const editor = this.primitiveEditor();
     if (!editor.state || !Array.isArray(editor.state.lines)) {
       throw new Error(
         "Synthetic edit prerequisite: editor state unavailable",
@@ -1132,7 +1136,7 @@ export function createModalEditor<TBase extends CustomEditorConstructor>(Base: T
   private syncInsertDelegate(): void {}
 
   private clearUnderlyingPasteStateIfActive(): void {
-    const editor = this as unknown as {
+    const editor = this.primitiveEditor() as ModalEditorInternals & {
       isInPaste?: boolean;
       pasteBuffer?: string;
       pasteCounter?: number;
@@ -1908,14 +1912,14 @@ export function createModalEditor<TBase extends CustomEditorConstructor>(Base: T
   }
 
   private openLineBelow(): void {
-    super.handleInput(CTRL_E);
-    super.handleInput(NEWLINE);
+    this.applyEditorPrimitive(CTRL_E);
+    this.applyEditorPrimitive(NEWLINE);
   }
 
   private openLineAbove(): void {
-    super.handleInput(CTRL_A);
-    super.handleInput(NEWLINE);
-    super.handleInput(ESC_UP);
+    this.applyEditorPrimitive(CTRL_A);
+    this.applyEditorPrimitive(NEWLINE);
+    this.applyEditorPrimitive(ESC_UP);
   }
 
   private handleMappedKey(key: string): void {
@@ -1927,12 +1931,12 @@ export function createModalEditor<TBase extends CustomEditorConstructor>(Base: T
       case "a":
         this.mode = "insert";
         if (!this.isCursorAtOrPastEol()) {
-          super.handleInput(ESC_RIGHT);
+          this.applyEditorPrimitive(ESC_RIGHT);
         }
         break;
       case "A":
         this.mode = "insert";
-        super.handleInput(CTRL_E);
+        this.applyEditorPrimitive(CTRL_E);
         break;
       case "I":
         this.mode = "insert";
@@ -1974,7 +1978,7 @@ export function createModalEditor<TBase extends CustomEditorConstructor>(Base: T
         this.moveCursorVertically(-1);
         break;
       default:
-        if (seq) super.handleInput(seq);
+        if (seq) this.applyEditorPrimitive(seq);
     }
   }
 
@@ -2004,11 +2008,7 @@ export function createModalEditor<TBase extends CustomEditorConstructor>(Base: T
   private tryMoveCursorByState(delta: number): boolean {
     if (delta === 0) return true;
 
-    const editor = this as unknown as {
-      state?: { lines?: string[]; cursorLine?: number; cursorCol?: number };
-      preferredVisualCol?: number;
-      tui?: { requestRender?: () => void };
-    };
+    const editor = this.primitiveEditor();
 
     const state = editor.state;
     if (!state || !Array.isArray(state.lines)) return false;
@@ -2038,25 +2038,20 @@ export function createModalEditor<TBase extends CustomEditorConstructor>(Base: T
 
     const seq = delta > 0 ? ESC_RIGHT : ESC_LEFT;
     for (let i = 0; i < Math.abs(delta); i++) {
-      super.handleInput(seq);
+      this.applyEditorPrimitive(seq);
     }
   }
 
   private moveCursorVertically(delta: number): void {
     if (delta === 0) return;
 
-    const editor = this as unknown as {
-      state?: { lines?: string[]; cursorLine?: number; cursorCol?: number };
-      preferredVisualCol?: number | null;
-      lastAction?: string | null;
-      tui?: { requestRender?: () => void };
-    };
+    const editor = this.primitiveEditor();
 
     const state = editor.state;
     if (!state || !Array.isArray(state.lines) || state.lines.length === 0) {
       const seq = delta > 0 ? ESC_DOWN : ESC_UP;
       for (let i = 0; i < Math.abs(delta); i++) {
-        super.handleInput(seq);
+        this.applyEditorPrimitive(seq);
       }
       return;
     }
@@ -2075,12 +2070,7 @@ export function createModalEditor<TBase extends CustomEditorConstructor>(Base: T
   }
 
   private moveCursorToCol(col: number): void {
-    const editor = this as unknown as {
-      state?: { lines?: string[]; cursorLine?: number; cursorCol?: number };
-      preferredVisualCol?: number | null;
-      lastAction?: string | null;
-      tui?: { requestRender?: () => void };
-    };
+    const editor = this.primitiveEditor();
 
     const state = editor.state;
     if (!state || !Array.isArray(state.lines)) return;
@@ -2092,12 +2082,7 @@ export function createModalEditor<TBase extends CustomEditorConstructor>(Base: T
   }
 
   private moveCursorToAbsoluteIndex(abs: number): void {
-    const editor = this as unknown as {
-      state?: { lines?: string[]; cursorLine?: number; cursorCol?: number };
-      preferredVisualCol?: number | null;
-      lastAction?: string | null;
-      tui?: { requestRender?: () => void };
-    };
+    const editor = this.primitiveEditor();
 
     const state = editor.state;
     if (!state || !Array.isArray(state.lines)) return;
@@ -2111,16 +2096,11 @@ export function createModalEditor<TBase extends CustomEditorConstructor>(Base: T
   }
 
   private moveCursorToLineStart(lineIndex: number): void {
-    const editor = this as unknown as {
-      state?: { lines?: string[]; cursorLine?: number; cursorCol?: number };
-      preferredVisualCol?: number | null;
-      lastAction?: string | null;
-      tui?: { requestRender?: () => void };
-    };
+    const editor = this.primitiveEditor();
 
     const state = editor.state;
     if (!state || !Array.isArray(state.lines) || state.lines.length === 0) {
-      super.handleInput(CTRL_A);
+      this.applyEditorPrimitive(CTRL_A);
       return;
     }
 
@@ -2149,7 +2129,7 @@ export function createModalEditor<TBase extends CustomEditorConstructor>(Base: T
     if (steps === 0) return;
 
     this.applySyntheticEdit(() => {
-      const editor = this as unknown as ModalEditorInternals;
+      const editor = this.primitiveEditor();
       const state = editor.state;
       if (!state || !Array.isArray(state.lines)) return;
 
@@ -2533,7 +2513,7 @@ export function createModalEditor<TBase extends CustomEditorConstructor>(Base: T
     const deleted = col < line.length ? line.slice(col) : hasNextLine ? "\n" : "";
 
     this.writeToRegister(deleted);
-    super.handleInput(CTRL_K);
+    this.applyEditorPrimitive(CTRL_K);
   }
 
   private cutCurrentLineContent(): void {
@@ -2545,8 +2525,8 @@ export function createModalEditor<TBase extends CustomEditorConstructor>(Base: T
     const deleted = line.length > 0 ? line : hasNextLine ? "\n" : "";
 
     this.writeToRegister(deleted);
-    super.handleInput(CTRL_A);
-    super.handleInput(CTRL_K);
+    this.applyEditorPrimitive(CTRL_A);
+    this.applyEditorPrimitive(CTRL_K);
   }
 
   private cutLine(): void {
@@ -2607,7 +2587,7 @@ export function createModalEditor<TBase extends CustomEditorConstructor>(Base: T
       this.replaceTextInBuffer(newText, startAbs);
 
       // Ensure cursor is at column 0 of the landing line
-      super.handleInput(CTRL_A);
+      this.applyEditorPrimitive(CTRL_A);
     }
   }
 
@@ -2873,7 +2853,7 @@ export function createModalEditor<TBase extends CustomEditorConstructor>(Base: T
   }
 
   private replaceTextInBuffer(text: string, cursorAbs: number): void {
-    const editor = this as unknown as {
+    const editor = this.primitiveEditor() as ModalEditorInternals & {
       state?: { lines?: string[]; cursorLine?: number; cursorCol?: number };
       preferredVisualCol?: number | null;
       historyIndex?: number;
@@ -2959,10 +2939,10 @@ export function createModalEditor<TBase extends CustomEditorConstructor>(Base: T
       const content = text.slice(0, -1);
       for (let i = 0; i < safeCount; i++) {
         // Line-wise: insert new line below and fill it
-        super.handleInput(CTRL_E);
-        super.handleInput(NEWLINE);
+        this.applyEditorPrimitive(CTRL_E);
+        this.applyEditorPrimitive(NEWLINE);
         for (const char of content) {
-          super.handleInput(char === "\n" ? NEWLINE : char);
+          this.applyEditorPrimitive(char === "\n" ? NEWLINE : char);
         }
       }
       return;
@@ -2970,11 +2950,11 @@ export function createModalEditor<TBase extends CustomEditorConstructor>(Base: T
 
     // Character-wise: insert after cursor
     if (!this.isCursorAtOrPastEol()) {
-      super.handleInput(ESC_RIGHT);
+      this.applyEditorPrimitive(ESC_RIGHT);
     }
     for (let i = 0; i < safeCount; i++) {
       for (const char of text) {
-        super.handleInput(char === "\n" ? NEWLINE : char);
+        this.applyEditorPrimitive(char === "\n" ? NEWLINE : char);
       }
     }
   }
@@ -2989,11 +2969,11 @@ export function createModalEditor<TBase extends CustomEditorConstructor>(Base: T
       const content = text.slice(0, -1);
       for (let i = 0; i < safeCount; i++) {
         // Line-wise: insert new line above and fill it
-        super.handleInput(CTRL_A);
-        super.handleInput(NEWLINE);
-        super.handleInput(ESC_UP);
+        this.applyEditorPrimitive(CTRL_A);
+        this.applyEditorPrimitive(NEWLINE);
+        this.applyEditorPrimitive(ESC_UP);
         for (const char of content) {
-          super.handleInput(char === "\n" ? NEWLINE : char);
+          this.applyEditorPrimitive(char === "\n" ? NEWLINE : char);
         }
       }
       return;
@@ -3002,7 +2982,7 @@ export function createModalEditor<TBase extends CustomEditorConstructor>(Base: T
     // Character-wise: insert before cursor (just type it)
     for (let i = 0; i < safeCount; i++) {
       for (const char of text) {
-        super.handleInput(char === "\n" ? NEWLINE : char);
+        this.applyEditorPrimitive(char === "\n" ? NEWLINE : char);
       }
     }
   }

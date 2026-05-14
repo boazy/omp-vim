@@ -1090,6 +1090,48 @@ describe("ModalEditor insert delegate routing", () => {
   });
 });
 
+describe("ModalEditor delegate-backed primitives", () => {
+  it("uses delegate cursor movement during INSERT for subsequent NORMAL x", () => {
+    const editor = new ModalEditor(stubTui, stubTheme, stubKeybindings);
+    const delegate = createCompatibleDelegateEditor();
+    setInsertDelegateForTest(editor, delegate);
+
+    sendKeys(editor, ["a", "b", "c", "\x1b[D", "\x1b[D", "\x1b", "x"]);
+
+    assert.deepEqual(delegate.rawInputs, ["a", "b", "c", "\x1b[D", "\x1b[D"]);
+    assert.equal(editor.getText(), "ac");
+    assert.deepEqual(editor.getCursor(), { line: 0, col: 1 });
+  });
+
+  it("applies open-line primitives to delegate-backed text", () => {
+    const editor = new ModalEditor(stubTui, stubTheme, stubKeybindings);
+    const delegate = createCompatibleDelegateEditor();
+    setInsertDelegateForTest(editor, delegate);
+
+    sendKeys(editor, ["a", "b", "c", "\x1b", "o"]);
+
+    assert.equal(editor.getMode(), "insert");
+    assert.equal(editor.getText(), "abc\n");
+    assert.deepEqual(editor.getCursor(), { line: 1, col: 0 });
+  });
+
+  it("uses delegate undo and pi-vim redo for delegate-backed edits", () => {
+    const editor = new ModalEditor(stubTui, stubTheme, stubKeybindings);
+    const delegate = createCompatibleDelegateEditor();
+    setInsertDelegateForTest(editor, delegate);
+
+    sendKeys(editor, ["a", "b", "c", "\x1b", "0", "x"]);
+    assert.equal(editor.getText(), "bc");
+
+    sendKeys(editor, ["u"]);
+    assert.equal(editor.getText(), "abc");
+
+    sendKeys(editor, ["\x12"]);
+    assert.equal(editor.getText(), "bc");
+    assert.deepEqual(editor.getCursor(), { line: 0, col: 0 });
+  });
+});
+
 describe("insert delegate factory integration", () => {
   it("captures the previous factory before install and calls it once per mounted editor", async () => {
     let previousFactoryCalls = 0;
