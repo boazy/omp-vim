@@ -3196,13 +3196,13 @@ export default function (pi: ExtensionAPI) {
             editor.setInsertDelegate(compatibility.editor);
           } else {
             ctx.ui.notify(
-              `pi-vim: incompatible previous editor ignored (${compatibility.reason})`,
+              `incompatible previous editor (${compatibility.reason})`,
               "warning",
             );
           }
         } catch (error) {
           ctx.ui.notify(
-            `pi-vim: previous editor factory failed; using standalone editor (${formatUnknownError(error)})`,
+            `previous editor factory failed (${formatUnknownError(error)})`,
             "warning",
           );
         }
