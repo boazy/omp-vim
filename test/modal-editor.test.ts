@@ -1228,6 +1228,40 @@ describe("ModalEditor stock editor delegate surface", () => {
   });
 });
 
+describe("ModalEditor delegate render overlay", () => {
+  it("renders delegate output with INSERT mode label overlay", () => {
+    const editor = new ModalEditor(stubTui, stubTheme, stubKeybindings);
+    const delegate = createCompatibleDelegateEditor([
+      "delegate first line",
+      "delegate footer 1234567890",
+    ]);
+    editor.focused = true;
+    setInsertDelegateForTest(editor, delegate);
+
+    const lines = editor.render(24);
+
+    const footer = lines.at(-1) ?? "";
+    assert.equal(lines[0], "delegate first line");
+    assert.equal(footer.includes("delegate footer"), true);
+    assert.equal(footer.endsWith(" INSERT "), true);
+    assert.equal(delegate.focused, true);
+    assert.equal(visibleWidth(footer), 24);
+  });
+
+  it("renders NORMAL label after escape over delegate output", () => {
+    const editor = new ModalEditor(stubTui, stubTheme, stubKeybindings);
+    const delegate = createCompatibleDelegateEditor(["delegate normal footer"]);
+    setInsertDelegateForTest(editor, delegate);
+
+    editor.handleInput("\x1b");
+    const lines = editor.render(30);
+
+    assert.equal(editor.getMode(), "normal");
+    assert.equal(lines.at(-1), "delegate normal footer NORMAL ");
+    assert.equal(visibleWidth(lines.at(-1) ?? ""), 30);
+  });
+});
+
 describe("insert delegate factory integration", () => {
   it("captures the previous factory before install and calls it once per mounted editor", async () => {
     let previousFactoryCalls = 0;

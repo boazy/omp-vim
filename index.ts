@@ -3109,7 +3109,14 @@ export function createModalEditor<TBase extends CustomEditorConstructor>(Base: T
   }
 
   render(width: number): string[] {
-    const lines = super.render(width);
+    const delegate = this.insertDelegate;
+    let lines: string[];
+    if (delegate) {
+      this.syncInsertDelegate();
+      lines = [...delegate.render(width)];
+    } else {
+      lines = super.render(width);
+    }
     this.syncCursorShapeForRender(lines);
     if (lines.length === 0) return lines;
 
