@@ -16,9 +16,12 @@ import type { WordMotionDirection, WordMotionTarget } from "../word-boundary-cac
 import installPiVim, { ModalEditor } from "../index.js";
 import { setPiVimSettingsReaderForTests } from "../clipboard-policy.js";
 import {
+  type CompatibleDelegateEditor,
+  createCompatibleDelegateEditor,
   createCursorShapeTui,
   createEditorWithSpy,
   createExtensionApiHarness,
+  createMinimalIncompatibleEditor,
   createMultiLineEditor,
   sendKeys,
   stubKeybindings,
@@ -67,6 +70,12 @@ type EditorFactory = (
   theme: ConstructorParameters<typeof ModalEditor>[1],
   keybindings: ConstructorParameters<typeof ModalEditor>[2],
 ) => ModalEditor;
+
+type PreviousEditorFactory = (
+  tui: ConstructorParameters<typeof ModalEditor>[0],
+  theme: ConstructorParameters<typeof ModalEditor>[1],
+  keybindings: ConstructorParameters<typeof ModalEditor>[2],
+) => unknown;
 
 type NotificationCall = { message: string; type: string };
 
@@ -124,6 +133,8 @@ function setInternalCursor(editor: ModalEditor, cursorCol: number, cursorLine: n
 
 type InstalledExtension = {
   editorFactory: EditorFactory;
+  readonly getEditorComponentCalls: number;
+  readonly uiCallOrder: string[];
   readonly notificationCalls: number;
   readonly notifications: NotificationCall[];
   readonly shutdownCalls: number;
@@ -132,9 +143,13 @@ type InstalledExtension = {
   readonly sessionEndHandlerCount: number;
 };
 
-async function installExtensionWithEditorFactory(): Promise<InstalledExtension> {
+async function installExtensionWithEditorFactory(
+  previousFactory?: PreviousEditorFactory,
+): Promise<InstalledExtension> {
   const pi = createExtensionApiHarness();
   let editorFactory: EditorFactory | null = null;
+  let getEditorComponentCalls = 0;
+  const uiCallOrder: string[] = [];
   let notificationCalls = 0;
   const notifications: NotificationCall[] = [];
   let shutdownCalls = 0;
@@ -144,7 +159,13 @@ async function installExtensionWithEditorFactory(): Promise<InstalledExtension> 
     ui: {
       theme: stubTheme,
       setEditorComponent(factory: EditorFactory): void {
+        uiCallOrder.push("setEditorComponent");
         editorFactory = factory;
+      },
+      getEditorComponent(): PreviousEditorFactory | undefined {
+        uiCallOrder.push("getEditorComponent");
+        getEditorComponentCalls++;
+        return previousFactory;
       },
       notify(message: string, type: string): void {
         notificationCalls++;
@@ -165,6 +186,12 @@ async function installExtensionWithEditorFactory(): Promise<InstalledExtension> 
 
   return {
     editorFactory,
+    get getEditorComponentCalls() {
+      return getEditorComponentCalls;
+    },
+    get uiCallOrder() {
+      return uiCallOrder;
+    },
     get notificationCalls() {
       return notificationCalls;
     },
@@ -999,57 +1026,109 @@ describe("cursor shape lifecycle", () => {
   });
 });
 
-describe("composable editor factory (#3935)", () => {
-  it("wraps a previously installed editor by subclassing its class", async () => {
-    // Simulate another extension having already installed its own custom editor.
-    class PreviousEditor {
-      previousMarker = true;
-    }
-
-    const pi = createExtensionApiHarness();
-    let editorFactory: EditorFactory | null = null;
-    let previousProbeCount = 0;
-
-    const ctx = {
-      cwd: process.cwd(),
-      hasUI: true,
-      ui: {
-        theme: stubTheme,
-        setEditorComponent(factory: EditorFactory): void {
-          editorFactory = factory;
-        },
-        getEditorComponent(): EditorFactory | undefined {
-          // Pretend a prior extension's factory was installed.
-          return (() => {
-            previousProbeCount += 1;
-            return new PreviousEditor() as unknown as ModalEditor;
-          }) as unknown as EditorFactory;
-        },
-        notify(): void {},
-      },
-      shutdown(): void {},
+describe("insert delegate factory integration", () => {
+  it("captures the previous factory before install and calls it once per mounted editor", async () => {
+    let previousFactoryCalls = 0;
+    const previousEditors: CompatibleDelegateEditor[] = [];
+    const previousFactory: PreviousEditorFactory = () => {
+      previousFactoryCalls++;
+      const previousEditor = createCompatibleDelegateEditor();
+      previousEditors.push(previousEditor);
+      return previousEditor;
     };
 
-    installPiVim(pi);
-    await pi.emit("session_start", undefined, ctx);
+    const extension = await installExtensionWithEditorFactory(previousFactory);
 
-    const factory = editorFactory as EditorFactory | null;
-    assert.ok(factory, "expected session_start to install an editor factory");
-    const editor = factory(stubTui, stubTheme, stubKeybindings);
+    assert.equal(extension.getEditorComponentCalls, 1);
+    assert.deepEqual(extension.uiCallOrder, ["getEditorComponent", "setEditorComponent"]);
 
-    // The mounted editor should be an instance of the previously-installed class —
-    // proving pi-vim wrapped it rather than replacing it.
-    assert.equal(editor instanceof PreviousEditor, true,
-      "composed editor should extend the previously installed editor class");
-    assert.equal((editor as unknown as { previousMarker: boolean }).previousMarker, true);
+    const first = extension.editorFactory(stubTui, stubTheme, stubKeybindings);
+    const second = extension.editorFactory(stubTui, stubTheme, stubKeybindings);
 
-    // It should also be a usable ModalEditor: its modal-editor methods are present.
-    assert.equal(typeof editor.handleInput, "function");
-    assert.equal(typeof editor.getMode, "function");
+    assert.equal(first instanceof ModalEditor, true);
+    assert.equal(second instanceof ModalEditor, true);
+    assert.equal(previousFactoryCalls, 2);
+    assert.equal(previousEditors.length, 2);
+    assert.equal(extension.notificationCalls, 0);
+  });
+
+  it("warns and falls back when the previous factory throws", async () => {
+    const extension = await installExtensionWithEditorFactory(() => {
+      throw new Error("previous failed");
+    });
+
+    const editor = extension.editorFactory(stubTui, stubTheme, stubKeybindings);
+
+    assert.equal(editor instanceof ModalEditor, true);
     assert.equal(editor.getMode(), "insert");
+    assert.equal(extension.notificationCalls, 1);
+    assert.match(extension.notifications[0]?.message ?? "", /previous editor factory failed/i);
+    assert.match(extension.notifications[0]?.message ?? "", /previous failed/);
+    assert.equal(extension.notifications[0]?.type, "warning");
+  });
 
-    // Probe was called exactly once during installation — not on every keystroke.
-    assert.equal(previousProbeCount, 1);
+  for (const scenario of [
+    {
+      name: "missing getCursor()",
+      makeEditor(): unknown {
+        const editor = createCompatibleDelegateEditor() as CompatibleDelegateEditor;
+        (editor as unknown as Record<string, unknown>).getCursor = undefined;
+        return editor;
+      },
+      reason: /getCursor/,
+    },
+    {
+      name: "missing getLines()",
+      makeEditor(): unknown {
+        const editor = createCompatibleDelegateEditor() as CompatibleDelegateEditor;
+        (editor as unknown as Record<string, unknown>).getLines = undefined;
+        return editor;
+      },
+      reason: /getLines/,
+    },
+    {
+      name: "missing required internals",
+      makeEditor(): unknown {
+        return {
+          ...createMinimalIncompatibleEditor(),
+          getLines(): string[] {
+            return [""];
+          },
+          getCursor(): { line: number; col: number } {
+            return { line: 0, col: 0 };
+          },
+          insertTextAtCursor(text: string): void {
+            void text;
+          },
+        };
+      },
+      reason: /state|pushUndoSnapshot/,
+    },
+  ]) {
+    it(`warns and falls back when the previous editor is incompatible: ${scenario.name}`, async () => {
+      const extension = await installExtensionWithEditorFactory(() => scenario.makeEditor());
+
+      const editor = extension.editorFactory(stubTui, stubTheme, stubKeybindings);
+
+      assert.equal(editor instanceof ModalEditor, true);
+      assert.equal(editor.getMode(), "insert");
+      assert.equal(extension.notificationCalls, 1);
+      assert.equal(extension.notifications[0]?.type, "warning");
+      assert.match(extension.notifications[0]?.message ?? "", /incompatible previous editor/i);
+      assert.match(extension.notifications[0]?.message ?? "", scenario.reason);
+    });
+  }
+
+  it("emits one compatibility warning per mounted editor", async () => {
+    const extension = await installExtensionWithEditorFactory(() => createMinimalIncompatibleEditor());
+
+    extension.editorFactory(stubTui, stubTheme, stubKeybindings);
+    extension.editorFactory(stubTui, stubTheme, stubKeybindings);
+
+    assert.equal(extension.notificationCalls, 2);
+    assert.equal(extension.notifications.length, 2);
+    assert.match(extension.notifications[0]?.message ?? "", /incompatible previous editor/i);
+    assert.match(extension.notifications[1]?.message ?? "", /incompatible previous editor/i);
   });
 
   it("falls back to the canonical ModalEditor when no previous factory exists", async () => {

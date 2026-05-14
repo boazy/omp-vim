@@ -2,7 +2,10 @@
  * Test harness for ModalEditor integration tests.
  */
 
-import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
+import {
+  CustomEditor,
+  type ExtensionAPI,
+} from "@mariozechner/pi-coding-agent";
 
 import { ModalEditor } from "../index.js";
 
@@ -119,6 +122,62 @@ export const stubTheme = {
 export const stubKeybindings = {
   matches: () => false,
 } as unknown as ModalEditorConstructorArgs[2];
+
+export class CompatibleDelegateEditor extends CustomEditor {
+  readonly rawInputs: string[] = [];
+  readonly invalidations: number[] = [];
+
+  renderLines: string[] | null = null;
+
+  override handleInput(data: string): void {
+    this.rawInputs.push(data);
+    super.handleInput(data);
+  }
+
+  override invalidate(): void {
+    this.invalidations.push(this.invalidations.length + 1);
+    super.invalidate();
+  }
+
+  override render(width: number): string[] {
+    if (this.renderLines) return [...this.renderLines];
+    return super.render(width);
+  }
+}
+
+export function createCompatibleDelegateEditor(
+  renderLines?: string[],
+): CompatibleDelegateEditor {
+  const editor = new CompatibleDelegateEditor(stubTui, stubTheme, stubKeybindings);
+  editor.renderLines = renderLines ?? null;
+  return editor;
+}
+
+export function createMinimalIncompatibleEditor(): {
+  render(width: number): string[];
+  invalidate(): void;
+  handleInput(data: string): void;
+  getText(): string;
+  setText(text: string): void;
+} {
+  let text = "";
+  return {
+    render(width: number): string[] {
+      void width;
+      return [text];
+    },
+    invalidate(): void {},
+    handleInput(data: string): void {
+      text += data;
+    },
+    getText(): string {
+      return text;
+    },
+    setText(nextText: string): void {
+      text = nextText;
+    },
+  };
+}
 
 /**
  * Send an array of key events to the editor.

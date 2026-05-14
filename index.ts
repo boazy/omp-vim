@@ -96,6 +96,85 @@ type ModalEditorInternals = {
   setCursorCol?: (col: number) => void;
 };
 
+export type CustomEditorCompatible = {
+  render(width: number): string[];
+  invalidate(): void;
+  handleInput(data: string): void;
+  getText(): string;
+  setText(text: string): void;
+  getLines(): string[];
+  getCursor(): { line: number; col: number };
+  insertTextAtCursor(text: string): void;
+  state: { lines: string[]; cursorLine: number; cursorCol: number };
+  pushUndoSnapshot(): void;
+};
+
+export type CompatibilityResult =
+  | { compatible: true; editor: CustomEditorCompatible }
+  | { compatible: false; reason: string };
+
+export const REQUIRED_COMPATIBLE_METHODS = [
+  "render",
+  "invalidate",
+  "handleInput",
+  "getText",
+  "setText",
+  "getLines",
+  "getCursor",
+  "insertTextAtCursor",
+] as const;
+
+export function isRecord(value: unknown): value is Record<PropertyKey, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+export function getCompatibility(editor: unknown): CompatibilityResult {
+  if (!isRecord(editor)) {
+    return { compatible: false, reason: "previous editor is not an object" };
+  }
+
+  const missingMethods = REQUIRED_COMPATIBLE_METHODS.filter(
+    (method) => typeof editor[method] !== "function",
+  );
+  if (missingMethods.length > 0) {
+    return {
+      compatible: false,
+      reason: `missing compatible editor methods: ${missingMethods.join(", ")}`,
+    };
+  }
+
+  const state = editor.state;
+  if (!isRecord(state)) {
+    return { compatible: false, reason: "missing compatible editor state" };
+  }
+  if (!Array.isArray(state.lines)) {
+    return { compatible: false, reason: "missing compatible editor state.lines" };
+  }
+  if (typeof state.cursorLine !== "number") {
+    return { compatible: false, reason: "missing compatible editor state.cursorLine" };
+  }
+  if (typeof state.cursorCol !== "number") {
+    return { compatible: false, reason: "missing compatible editor state.cursorCol" };
+  }
+  if (typeof editor.pushUndoSnapshot !== "function") {
+    return { compatible: false, reason: "missing compatible editor pushUndoSnapshot" };
+  }
+
+  return { compatible: true, editor: editor as CustomEditorCompatible };
+}
+
+export function formatUnknownError(error: unknown): string {
+  if (error instanceof Error) {
+    return error.message ? `${error.name}: ${error.message}` : error.name;
+  }
+  if (typeof error === "string") return error;
+  try {
+    return JSON.stringify(error) ?? String(error);
+  } catch {
+    return String(error);
+  }
+}
+
 type ClipboardWriteFn = (text: string, signal: AbortSignal) => Promise<void>;
 type ClipboardReadFn = () => string | null;
 type ClipboardProcess = ReturnType<typeof spawn>;
@@ -533,12 +612,10 @@ class ClipboardMirror {
 type CustomEditorConstructor = new (...args: any[]) => CustomEditor;
 
 /**
- * Class factory that produces a ModalEditor subclass extending the provided
- * base class. Pass `CustomEditor` for the standalone case, or another extension's
- * editor class to compose vim modal editing on top of it.
- *
- * See https://github.com/badlogic/pi-mono/issues/3935 for the composability
- * contract that this opt-in supports.
+ * Backward-compatible class factory for callers that explicitly want a
+ * ModalEditor subclass of a custom base. The installer does not use this to
+ * compose preceding editor factories; it captures them and delegates INSERT
+ * behavior at mount time instead.
  */
 export function createModalEditor<TBase extends CustomEditorConstructor>(Base: TBase) {
   return class ModalEditor extends Base {
@@ -564,6 +641,7 @@ export function createModalEditor<TBase extends CustomEditorConstructor>(Base: T
   private labelColorizers: ModeLabelColorizers | null = null;
   private readonly cursorShapeRuntime: CursorShapeRuntime | null;
   private lastCursorShapeSequence: CursorShapeSequence | null = null;
+  private insertDelegate: CustomEditorCompatible | null = null;
 
   // Unnamed register
   private unnamedRegister: string = "";
@@ -603,6 +681,7 @@ export function createModalEditor<TBase extends CustomEditorConstructor>(Base: T
   }
   setQuitFn(fn: () => void): void { this.quitFn = fn; }
   setNotifyFn(fn: (message: string) => void): void { this.notifyFn = fn; }
+  setInsertDelegate(editor: CustomEditorCompatible): void { this.insertDelegate = editor; }
   getRegister(): string { return this.unnamedRegister; }
   setRegister(text: string): void { this.unnamedRegister = text; }
   getMode(): Mode { return this.mode; }
@@ -3098,34 +3177,37 @@ export default function (pi: ExtensionAPI) {
       normal: (s: string) => t.fg("borderAccent", reverseVideo(s)),
       ex: (s: string) => t.fg("warning", reverseVideo(s)),
     } : null;
-    // Composability: if a previous extension installed a custom editor, build the modal
-    // editor as a subclass of that extension's class so its overrides remain in the chain.
-    // See https://github.com/badlogic/pi-mono/issues/3935
-    const previous = ctx.ui.getEditorComponent?.();
+    const previousFactory = ctx.ui.getEditorComponent?.();
 
     ctx.ui.setEditorComponent((tui, theme, kb) => {
       cursorShapeCleanup = enableCursorShapeSupport(tui);
 
-      let Base: CustomEditorConstructor = CustomEditor;
-      if (previous) {
-        // Probe the previous factory once to obtain its class. The probe instance is
-        // discarded; the actual editor is constructed below via `new Composed(...)`,
-        // which fires each constructor in the chain exactly once for the mounted instance.
-        const probe = previous(tui, theme, kb);
-        const probeCtor = probe?.constructor;
-        if (typeof probeCtor === "function") {
-          Base = probeCtor as CustomEditorConstructor;
-        }
-      }
-
-      // Preserve `instanceof ModalEditor` for the common standalone case by reusing
-      // the canonical class when no other extension is present in the chain.
-      const Composed = previous ? createModalEditor(Base) : ModalEditor;
-      const editor = new Composed(tui, theme, kb);
+      const editor = new ModalEditor(tui, theme, kb);
       editor.setColorizers(colorizers);
       editor.setClipboardMirrorPolicy(clipboardMirrorPolicy.policy);
       editor.setQuitFn(() => ctx.shutdown());
       editor.setNotifyFn((message) => ctx.ui.notify(message, "warning"));
+
+      if (previousFactory) {
+        try {
+          const previousEditor = previousFactory(tui, theme, kb);
+          const compatibility = getCompatibility(previousEditor);
+          if (compatibility.compatible) {
+            editor.setInsertDelegate(compatibility.editor);
+          } else {
+            ctx.ui.notify(
+              `pi-vim: incompatible previous editor ignored (${compatibility.reason})`,
+              "warning",
+            );
+          }
+        } catch (error) {
+          ctx.ui.notify(
+            `pi-vim: previous editor factory failed; using standalone editor (${formatUnknownError(error)})`,
+            "warning",
+          );
+        }
+      }
+
       return editor;
     });
   });
