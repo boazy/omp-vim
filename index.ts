@@ -606,17 +606,10 @@ class ClipboardMirror {
   }
 }
 
-// TypeScript class-mixin pattern requires `any[]` for the constructor's rest args
-// so super(...args) accepts whatever the base constructor expects.
-// biome-ignore lint/suspicious/noExplicitAny: see comment above
+// biome-ignore lint/suspicious/noExplicitAny: mixin constructor passthrough.
 type CustomEditorConstructor = new (...args: any[]) => CustomEditor;
 
-/**
- * Backward-compatible class factory for callers that explicitly want a
- * ModalEditor subclass of a custom base. The installer does not use this to
- * compose preceding editor factories; it captures them and delegates INSERT
- * behavior at mount time instead.
- */
+/** Backward-compatible class factory; the installer uses INSERT delegation. */
 export function createModalEditor<TBase extends CustomEditorConstructor>(Base: TBase) {
   return class ModalEditor extends Base {
   private mode: Mode = "insert";
@@ -685,7 +678,9 @@ export function createModalEditor<TBase extends CustomEditorConstructor>(Base: T
   getRegister(): string { return this.unnamedRegister; }
   setRegister(text: string): void { this.unnamedRegister = text; }
   getMode(): Mode { return this.mode; }
-  getText(): string { return this.getLines().join("\n"); }
+  getText(): string { return this.insertDelegate?.getText() ?? this.getLines().join("\n"); }
+  getLines(): string[] { return this.insertDelegate?.getLines() ?? super.getLines(); }
+  getCursor(): { line: number; col: number } { return this.insertDelegate?.getCursor() ?? super.getCursor(); }
 
   override setText(text: string): void {
     this.clearRedoStack();
@@ -1046,28 +1041,23 @@ export function createModalEditor<TBase extends CustomEditorConstructor>(Base: T
     }
 
     if (this.mode === "insert") {
-      // Shift+Alt+A: go to end of line (like Esc -> A but stay in insert)
       if (matchesKey(data, Key.shiftAlt("a")) || data === "\x1bA") {
-        super.handleInput(CTRL_E);
+        this.applyEditorPrimitive(CTRL_E);
         return;
       }
-      // Shift+Alt+I: go to start of line (like Esc -> I but stay in insert)
       if (matchesKey(data, Key.shiftAlt("i")) || data === "\x1bI") {
-        super.handleInput(CTRL_A);
+        this.applyEditorPrimitive(CTRL_A);
         return;
       }
-      // Alt+o: open new line below (stay in insert mode)
       if (matchesKey(data, Key.alt("o")) || data === "\x1bo") {
         this.openLineBelow();
         return;
       }
-      // Alt+Shift+o: open new line above (stay in insert mode)
-      // \x1bO is the legacy sequence for Alt+Shift+O (VT100 SS3 prefix in non-Kitty terminals)
       if (matchesKey(data, Key.shiftAlt("o")) || data === "\x1bO") {
         this.openLineAbove();
         return;
       }
-      super.handleInput(data);
+      this.handleInsertInput(data);
       return;
     }
 
@@ -1129,6 +1119,17 @@ export function createModalEditor<TBase extends CustomEditorConstructor>(Base: T
 
     this.handleNormalMode(data);
   }
+
+  private handleInsertInput(data: string): void { this.applyEditorPrimitive(data); }
+
+  private applyEditorPrimitive(data: string): void {
+    this.syncInsertDelegate();
+    const editor = this.insertDelegate;
+    if (editor) editor.handleInput(data);
+    else super.handleInput(data);
+  }
+
+  private syncInsertDelegate(): void {}
 
   private clearUnderlyingPasteStateIfActive(): void {
     const editor = this as unknown as {

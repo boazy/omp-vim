@@ -96,6 +96,10 @@ function focusEditor(editor: ModalEditor): void {
   editor.focused = true;
 }
 
+function setInsertDelegateForTest(editor: ModalEditor, delegate: CompatibleDelegateEditor): void {
+  editor.setInsertDelegate(delegate as unknown as Parameters<ModalEditor["setInsertDelegate"]>[0]);
+}
+
 function findCursorMarkerLine(lines: string[]): string {
   const line = lines.find((line) => line.includes(CURSOR_MARKER));
   assert.ok(line, "expected rendered lines to include CURSOR_MARKER");
@@ -1023,6 +1027,66 @@ describe("cursor shape lifecycle", () => {
 
     assert.deepEqual(tui.terminalWrites, []);
     assert.deepEqual(tui.hardwareCursorValues, []);
+  });
+});
+
+describe("ModalEditor insert delegate routing", () => {
+  it("forwards ordinary INSERT input to the delegate", () => {
+    const editor = new ModalEditor(stubTui, stubTheme, stubKeybindings);
+    const delegate = createCompatibleDelegateEditor();
+    setInsertDelegateForTest(editor, delegate);
+
+    editor.handleInput("a");
+
+    assert.deepEqual(delegate.rawInputs, ["a"]);
+    assert.equal(editor.getText(), "a");
+    assert.deepEqual(editor.getLines(), ["a"]);
+    assert.deepEqual(editor.getCursor(), { line: 0, col: 1 });
+  });
+
+  it("consumes escape in INSERT mode without forwarding it to the delegate", () => {
+    const editor = new ModalEditor(stubTui, stubTheme, stubKeybindings);
+    const delegate = createCompatibleDelegateEditor();
+    setInsertDelegateForTest(editor, delegate);
+
+    editor.handleInput("\x1b");
+
+    assert.deepEqual(delegate.rawInputs, []);
+    assert.equal(editor.getMode(), "normal");
+  });
+
+  it("does not forward NORMAL printable input as raw delegate input", () => {
+    const editor = new ModalEditor(stubTui, stubTheme, stubKeybindings);
+    const delegate = createCompatibleDelegateEditor();
+    setInsertDelegateForTest(editor, delegate);
+
+    editor.handleInput("\x1b");
+    editor.handleInput("x");
+
+    assert.deepEqual(delegate.rawInputs, []);
+    assert.equal(editor.getMode(), "normal");
+  });
+
+  it("does not forward EX command text as raw delegate input", () => {
+    const editor = new ModalEditor(stubTui, stubTheme, stubKeybindings);
+    const delegate = createCompatibleDelegateEditor();
+    setInsertDelegateForTest(editor, delegate);
+
+    sendKeys(editor, ["\x1b", ":", "q"]);
+
+    assert.deepEqual(delegate.rawInputs, []);
+    assert.equal(editor.getMode(), "normal");
+  });
+
+  it("does not forward NORMAL bracketed paste as raw delegate input", () => {
+    const editor = new ModalEditor(stubTui, stubTheme, stubKeybindings);
+    const delegate = createCompatibleDelegateEditor();
+    setInsertDelegateForTest(editor, delegate);
+
+    sendKeys(editor, ["\x1b", "\x1b[200~PASTE\x1b[201~"]);
+
+    assert.deepEqual(delegate.rawInputs, []);
+    assert.equal(editor.getMode(), "normal");
   });
 });
 
