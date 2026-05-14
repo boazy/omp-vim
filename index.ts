@@ -5,6 +5,8 @@ import {
   type ExtensionAPI,
 } from "@mariozechner/pi-coding-agent";
 import {
+  type AutocompleteProvider,
+  type EditorComponent,
   CURSOR_MARKER,
   Key,
   matchesKey,
@@ -96,12 +98,7 @@ type ModalEditorInternals = {
   setCursorCol?: (col: number) => void;
 };
 
-export type CustomEditorCompatible = {
-  render(width: number): string[];
-  invalidate(): void;
-  handleInput(data: string): void;
-  getText(): string;
-  setText(text: string): void;
+export type CustomEditorCompatible = EditorComponent & {
   getLines(): string[];
   getCursor(): { line: number; col: number };
   insertTextAtCursor(text: string): void;
@@ -160,7 +157,7 @@ export function getCompatibility(editor: unknown): CompatibilityResult {
     return { compatible: false, reason: "missing compatible editor pushUndoSnapshot" };
   }
 
-  return { compatible: true, editor: editor as CustomEditorCompatible };
+  return { compatible: true, editor: editor as unknown as CustomEditorCompatible };
 }
 
 export function formatUnknownError(error: unknown): string {
@@ -682,9 +679,47 @@ export function createModalEditor<TBase extends CustomEditorConstructor>(Base: T
   getLines(): string[] { return this.insertDelegate?.getLines() ?? super.getLines(); }
   getCursor(): { line: number; col: number } { return this.insertDelegate?.getCursor() ?? super.getCursor(); }
 
+  private syncedDelegate(): CustomEditorCompatible | null { this.syncInsertDelegate(); return this.insertDelegate; }
+
   override setText(text: string): void {
     this.clearRedoStack();
-    super.setText(text);
+    const editor = this.syncedDelegate();
+    if (editor) editor.setText(text); else super.setText(text);
+  }
+
+  override insertTextAtCursor(text: string): void {
+    const editor = this.syncedDelegate();
+    if (editor) editor.insertTextAtCursor(text); else super.insertTextAtCursor(text);
+  }
+
+  override getExpandedText(): string {
+    const editor = this.insertDelegate;
+    return editor ? editor.getExpandedText?.() ?? editor.getText() : super.getExpandedText();
+  }
+
+  override addToHistory(text: string): void {
+    const editor = this.syncedDelegate();
+    if (editor) editor.addToHistory?.(text); else super.addToHistory(text);
+  }
+
+  override setAutocompleteProvider(provider: AutocompleteProvider): void {
+    const editor = this.syncedDelegate();
+    if (editor) editor.setAutocompleteProvider?.(provider); else super.setAutocompleteProvider(provider);
+  }
+
+  override setPaddingX(padding: number): void {
+    const editor = this.syncedDelegate();
+    if (editor) editor.setPaddingX?.(padding); else super.setPaddingX(padding);
+  }
+
+  override setAutocompleteMaxVisible(maxVisible: number): void {
+    const editor = this.syncedDelegate();
+    if (editor) editor.setAutocompleteMaxVisible?.(maxVisible); else super.setAutocompleteMaxVisible(maxVisible);
+  }
+
+  override invalidate(): void {
+    const editor = this.syncedDelegate();
+    if (editor) editor.invalidate(); else super.invalidate();
   }
 
   private captureSnapshot(): EditorSnapshot {
@@ -816,6 +851,7 @@ export function createModalEditor<TBase extends CustomEditorConstructor>(Base: T
     };
 
     this.onChangeHooked = true;
+    this.syncInsertDelegate();
   }
 
   private centralInvalidationCheck(): void {
@@ -1133,7 +1169,23 @@ export function createModalEditor<TBase extends CustomEditorConstructor>(Base: T
     else super.handleInput(data);
   }
 
-  private syncInsertDelegate(): void {}
+  private syncInsertDelegate(): void {
+    const editor = this.insertDelegate;
+    if (!editor) return;
+
+    Object.assign(editor, {
+      onSubmit: this.onSubmit,
+      onChange: this.onChange,
+      onEscape: this.onEscape,
+      onCtrlD: this.onCtrlD,
+      onPasteImage: this.onPasteImage,
+      onExtensionShortcut: this.onExtensionShortcut,
+      actionHandlers: this.actionHandlers,
+      borderColor: this.borderColor,
+      focused: this.focused,
+      disableSubmit: this.disableSubmit,
+    });
+  }
 
   private clearUnderlyingPasteStateIfActive(): void {
     const editor = this.primitiveEditor() as ModalEditorInternals & {

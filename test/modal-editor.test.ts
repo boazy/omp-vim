@@ -17,12 +17,14 @@ import installPiVim, { ModalEditor } from "../index.js";
 import { setPiVimSettingsReaderForTests } from "../clipboard-policy.js";
 import {
   type CompatibleDelegateEditor,
+  type DelegateSyncSnapshot,
   createCompatibleDelegateEditor,
   createCursorShapeTui,
   createEditorWithSpy,
   createExtensionApiHarness,
   createMinimalIncompatibleEditor,
   createMultiLineEditor,
+  createStockSurfaceDelegateEditor,
   sendKeys,
   stubKeybindings,
   stubTheme,
@@ -1129,6 +1131,100 @@ describe("ModalEditor delegate-backed primitives", () => {
     sendKeys(editor, ["\x12"]);
     assert.equal(editor.getText(), "bc");
     assert.deepEqual(editor.getCursor(), { line: 0, col: 0 });
+  });
+});
+
+describe("ModalEditor stock editor delegate surface", () => {
+  it("forwards stock editor methods to the delegate", () => {
+    const editor = new ModalEditor(stubTui, stubTheme, stubKeybindings);
+    const delegate = createStockSurfaceDelegateEditor();
+    const provider: Parameters<ModalEditor["setAutocompleteProvider"]>[0] = {
+      async getSuggestions() {
+        return null;
+      },
+      applyCompletion(lines, cursorLine, cursorCol) {
+        return { lines, cursorLine, cursorCol };
+      },
+    };
+    setInsertDelegateForTest(editor, delegate);
+
+    editor.setText("prefill");
+    editor.insertTextAtCursor(" plus");
+    const expandedText = editor.getExpandedText();
+    editor.addToHistory("history item");
+    editor.setAutocompleteProvider(provider);
+    editor.setPaddingX(4);
+    editor.setAutocompleteMaxVisible(8);
+    editor.invalidate();
+
+    assert.deepEqual(delegate.setTextCalls, ["prefill"]);
+    assert.deepEqual(delegate.insertedTexts, [" plus"]);
+    assert.equal(expandedText, "expanded delegate text");
+    assert.deepEqual(delegate.expandedTextCalls, [1]);
+    assert.deepEqual(delegate.historyAdds, ["history item"]);
+    assert.deepEqual(delegate.autocompleteProviders, [provider]);
+    assert.deepEqual(delegate.paddingXValues, [4]);
+    assert.deepEqual(delegate.autocompleteMaxVisibleValues, [8]);
+    assert.deepEqual(delegate.invalidations, [1]);
+    assert.equal(editor.getText(), delegate.getText());
+  });
+
+  it("falls back to delegate getText when expanded-text method is absent", () => {
+    const editor = new ModalEditor(stubTui, stubTheme, stubKeybindings);
+    const delegate = createCompatibleDelegateEditor();
+    delegate.setText("plain delegate text");
+    Object.defineProperty(delegate, "getExpandedText", {
+      value: undefined,
+      configurable: true,
+    });
+    setInsertDelegateForTest(editor, delegate);
+
+    assert.equal(editor.getExpandedText(), "plain delegate text");
+  });
+
+  it("syncs callbacks and public flags before delegate input", () => {
+    const editor = new ModalEditor(stubTui, stubTheme, stubKeybindings);
+    const delegate = createStockSurfaceDelegateEditor();
+    const changedTexts: string[] = [];
+    const onSubmit = () => {};
+    const onChange = (text: string) => changedTexts.push(text);
+    const onEscape = () => {};
+    const onCtrlD = () => {};
+    const onPasteImage = () => {};
+    const onExtensionShortcut = () => false;
+    const actionHandler = () => {};
+    const borderColor = (text: string) => `border:${text}`;
+    editor.onSubmit = onSubmit;
+    editor.onChange = onChange;
+    editor.onEscape = onEscape;
+    editor.onCtrlD = onCtrlD;
+    editor.onPasteImage = onPasteImage;
+    editor.onExtensionShortcut = onExtensionShortcut;
+    editor.actionHandlers.set(
+      "app.interrupt" as Parameters<typeof editor.actionHandlers.set>[0],
+      actionHandler,
+    );
+    editor.borderColor = borderColor;
+    editor.focused = true;
+    editor.disableSubmit = true;
+    setInsertDelegateForTest(editor, delegate);
+
+    editor.handleInput("z");
+
+    const snapshot: DelegateSyncSnapshot | undefined = delegate.inputSyncSnapshots[0];
+    assert.ok(snapshot, "expected delegate to record sync state before input");
+    assert.equal(snapshot.onSubmit, onSubmit);
+    assert.equal(snapshot.onEscape, onEscape);
+    assert.equal(snapshot.onCtrlD, onCtrlD);
+    assert.equal(snapshot.onPasteImage, onPasteImage);
+    assert.equal(snapshot.onExtensionShortcut, onExtensionShortcut);
+    assert.equal(snapshot.actionHandlers, editor.actionHandlers);
+    assert.equal(snapshot.borderColor, borderColor);
+    assert.equal(snapshot.focused, true);
+    assert.equal(snapshot.disableSubmit, true);
+    assert.equal(snapshot.onChange, editor.onChange);
+    assert.notEqual(snapshot.onChange, onChange);
+    assert.deepEqual(changedTexts, ["z"]);
   });
 });
 

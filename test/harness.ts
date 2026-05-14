@@ -145,6 +145,89 @@ export class CompatibleDelegateEditor extends CustomEditor {
   }
 }
 
+export type DelegateSyncSnapshot = {
+  onSubmit?: unknown;
+  onChange?: unknown;
+  onEscape?: unknown;
+  onCtrlD?: unknown;
+  onPasteImage?: unknown;
+  onExtensionShortcut?: unknown;
+  actionHandlers?: unknown;
+  borderColor?: unknown;
+  focused?: boolean;
+  disableSubmit?: boolean;
+};
+
+export class StockSurfaceDelegateEditor extends CompatibleDelegateEditor {
+  readonly expandedTextCalls: number[] = [];
+  readonly historyAdds: string[] = [];
+  readonly autocompleteProviders: Parameters<CustomEditor["setAutocompleteProvider"]>[0][] = [];
+  readonly paddingXValues: number[] = [];
+  readonly autocompleteMaxVisibleValues: number[] = [];
+  readonly insertedTexts: string[] = [];
+  readonly setTextCalls: string[] = [];
+  readonly inputSyncSnapshots: DelegateSyncSnapshot[] = [];
+
+  expandedTextResult = "expanded delegate text";
+
+  override handleInput(data: string): void {
+    this.inputSyncSnapshots.push({
+      onSubmit: this.onSubmit,
+      onChange: this.onChange,
+      onEscape: this.onEscape,
+      onCtrlD: this.onCtrlD,
+      onPasteImage: this.onPasteImage,
+      onExtensionShortcut: this.onExtensionShortcut,
+      actionHandlers: this.actionHandlers,
+      borderColor: this.borderColor,
+      focused: this.focused,
+      disableSubmit: this.disableSubmit,
+    });
+    super.handleInput(data);
+  }
+
+  override getExpandedText(): string {
+    this.expandedTextCalls.push(this.expandedTextCalls.length + 1);
+    return this.expandedTextResult;
+  }
+
+  override addToHistory(text: string): void {
+    this.historyAdds.push(text);
+    super.addToHistory(text);
+  }
+
+  override setAutocompleteProvider(
+    provider: Parameters<CustomEditor["setAutocompleteProvider"]>[0],
+  ): void {
+    this.autocompleteProviders.push(provider);
+    super.setAutocompleteProvider(provider);
+  }
+
+  override setPaddingX(padding: number): void {
+    this.paddingXValues.push(padding);
+    super.setPaddingX(padding);
+  }
+
+  override setAutocompleteMaxVisible(maxVisible: number): void {
+    this.autocompleteMaxVisibleValues.push(maxVisible);
+    super.setAutocompleteMaxVisible(maxVisible);
+  }
+
+  override insertTextAtCursor(text: string): void {
+    this.insertedTexts.push(text);
+    super.insertTextAtCursor(text);
+  }
+
+  override setText(text: string): void {
+    this.setTextCalls.push(text);
+    super.setText(text);
+  }
+}
+
+export function createStockSurfaceDelegateEditor(): StockSurfaceDelegateEditor {
+  return new StockSurfaceDelegateEditor(stubTui, stubTheme, stubKeybindings);
+}
+
 export function createCompatibleDelegateEditor(
   renderLines?: string[],
 ): CompatibleDelegateEditor {
