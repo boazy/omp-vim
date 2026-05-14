@@ -73,8 +73,6 @@ const SOFTWARE_CURSOR_RESETS = ["\x1b[0m", "\x1b[27m"] as const;
 const INSERT_CURSOR_SHAPE = "\x1b[5 q";
 const BLOCK_CURSOR_SHAPE = "\x1b[1 q";
 const RESET_CURSOR_SHAPE = "\x1b[0 q";
-// Pi emits OSC52 before its native clipboard fallback. Give that 5s fallback
-// a small grace so the parent does not kill the helper and discard stdout.
 const CLIPBOARD_WRITE_TIMEOUT_MS = PI_NATIVE_CLIPBOARD_TIMEOUT_MS + 500;
 const CLIPBOARD_SPAWN_FAILURE_LIMIT = 3;
 const CLIPBOARD_READ_TIMEOUT_MS = 750;
@@ -333,8 +331,6 @@ for await (const chunk of process.stdin) {
 try {
   await Promise.resolve(copyToClipboard(Buffer.concat(chunks).toString("utf8")));
 } catch {
-  // Pi clipboard writes are best-effort. Backend failures must not make the
-  // helper exit non-zero and trip the parent spawn/environment breaker.
 }
 `;
 
@@ -391,7 +387,7 @@ function killClipboardProcess(child: ClipboardProcess): void {
   try {
     child.kill("SIGKILL");
   } catch {
-    // Best effort only; clipboard mirroring must not affect editing.
+    return;
   }
 }
 
@@ -551,7 +547,6 @@ class ClipboardMirror {
           this.circuitBreaker.consecutiveEnvironmentFailures = 0;
         } catch (error) {
           this.recordWriteFailure(error);
-          // Clipboard mirroring is best-effort; the register is authoritative.
         } finally {
           if (this.activeController === controller) {
             this.activeController = null;
@@ -633,7 +628,6 @@ export function createModalEditor<TBase extends CustomEditorConstructor>(Base: T
   private lastCursorShapeSequence: CursorShapeSequence | null = null;
   private insertDelegate: CustomEditorCompatible | null = null;
 
-  // Unnamed register
   private unnamedRegister: string = "";
   private clipboardMirrorPolicy: ClipboardMirrorPolicy = DEFAULT_CLIPBOARD_MIRROR_POLICY;
   private readonly clipboardMirror = new ClipboardMirror(writeClipboardInChildProcess);
@@ -651,7 +645,6 @@ export function createModalEditor<TBase extends CustomEditorConstructor>(Base: T
     this.labelColorizers = colorizers ?? null;
   }
 
-  // Test seams
   setClipboardFn(fn: (text: string, signal?: AbortSignal) => unknown): void {
     this.clipboardMirror.setWriteFn(async (text: string, signal: AbortSignal) => {
       await fn(text, signal);
@@ -882,9 +875,6 @@ export function createModalEditor<TBase extends CustomEditorConstructor>(Base: T
 
     if (this.getText() === textBefore) return;
 
-    // Text changed — push undo boundary for pre-mutation state.
-    // Briefly swap pre-mutation state in for the snapshot, then
-    // restore the post-mutation result.
     const postLines = editor.state.lines.slice();
     const postCursorLine = editor.state.cursorLine;
     const postCursorCol = editor.state.cursorCol;
@@ -1586,8 +1576,6 @@ export function createModalEditor<TBase extends CustomEditorConstructor>(Base: T
     const supportsCountedTextObject = data === "i" || data === "a";
 
     if (hasCount && !supportsCountedWordMotion && !supportsCountedTextObject) {
-      // Counted forms beyond dd, d{count}j/k, d{count}{f/F/t/T}, and
-      // d{count}{w/e/b/W/E/B}/{i/a}w are out of scope.
       this.cancelPendingOperator(data);
       return;
     }
@@ -1603,7 +1591,6 @@ export function createModalEditor<TBase extends CustomEditorConstructor>(Base: T
       return;
     }
 
-    // Invalid motion: cancel operator to avoid sticky surprising deletes.
     this.cancelPendingOperator(data);
   }
 
@@ -1689,7 +1676,6 @@ export function createModalEditor<TBase extends CustomEditorConstructor>(Base: T
       return;
     }
 
-    // Invalid motion: cancel operator to avoid sticky surprising changes.
     this.cancelPendingOperator(data);
   }
 
@@ -1814,7 +1800,6 @@ export function createModalEditor<TBase extends CustomEditorConstructor>(Base: T
         && !supportsCountedParagraphMotion
         && !supportsCountedUnderscore
       ) {
-        // Unsupported prefixed forms: drop count and keep processing this key.
         this.prefixCount = "";
         this.operatorCount = "";
       }
@@ -1958,7 +1943,6 @@ export function createModalEditor<TBase extends CustomEditorConstructor>(Base: T
       return;
     }
 
-    // Pass control sequences (ctrl+c, etc.) to super, ignore printable chars
     if (this.isPrintableChunk(data)) return;
     super.handleInput(data);
   }
@@ -2073,8 +2057,6 @@ export function createModalEditor<TBase extends CustomEditorConstructor>(Base: T
 
     const target = cursorCol + delta;
 
-    // Only short-circuit line-local movement when each grapheme is one code
-    // unit; otherwise let the base editor keep cursor boundaries valid.
     if (target < 0 || target > line.length) return false;
 
     state.cursorCol = target;
@@ -2638,7 +2620,6 @@ export function createModalEditor<TBase extends CustomEditorConstructor>(Base: T
       const newText = text.slice(0, startAbs) + text.slice(endAbs);
       this.replaceTextInBuffer(newText, startAbs);
 
-      // Ensure cursor is at column 0 of the landing line
       this.applyEditorPrimitive(CTRL_A);
     }
   }
@@ -2671,7 +2652,6 @@ export function createModalEditor<TBase extends CustomEditorConstructor>(Base: T
     const col = cursor.col;
 
     if (motion === "$") {
-      // Match D/C behavior exactly, including newline kill at EOL.
       this.cutToEndOfLine();
       return true;
     }
@@ -2789,7 +2769,6 @@ export function createModalEditor<TBase extends CustomEditorConstructor>(Base: T
     }
 
     if (this.hasPendingCount()) {
-      // Counted forms beyond yy, y{count}j/k, and y{count}{f/F/t/T} are out of scope.
       this.cancelPendingOperator(data);
       return;
     }
@@ -2879,7 +2858,6 @@ export function createModalEditor<TBase extends CustomEditorConstructor>(Base: T
 
     if (end <= start) return;
 
-    // Yank only — no cursor movement, no text mutation
     this.writeToRegister(line.slice(start, end), "yank");
   }
 
@@ -2990,7 +2968,6 @@ export function createModalEditor<TBase extends CustomEditorConstructor>(Base: T
     if (text.endsWith("\n")) {
       const content = text.slice(0, -1);
       for (let i = 0; i < safeCount; i++) {
-        // Line-wise: insert new line below and fill it
         this.applyEditorPrimitive(CTRL_E);
         this.applyEditorPrimitive(NEWLINE);
         for (const char of content) {
@@ -3000,7 +2977,6 @@ export function createModalEditor<TBase extends CustomEditorConstructor>(Base: T
       return;
     }
 
-    // Character-wise: insert after cursor
     if (!this.isCursorAtOrPastEol()) {
       this.applyEditorPrimitive(ESC_RIGHT);
     }
@@ -3020,7 +2996,6 @@ export function createModalEditor<TBase extends CustomEditorConstructor>(Base: T
     if (text.endsWith("\n")) {
       const content = text.slice(0, -1);
       for (let i = 0; i < safeCount; i++) {
-        // Line-wise: insert new line above and fill it
         this.applyEditorPrimitive(CTRL_A);
         this.applyEditorPrimitive(NEWLINE);
         this.applyEditorPrimitive(ESC_UP);
@@ -3031,7 +3006,6 @@ export function createModalEditor<TBase extends CustomEditorConstructor>(Base: T
       return;
     }
 
-    // Character-wise: insert before cursor (just type it)
     for (let i = 0; i < safeCount; i++) {
       for (const char of text) {
         this.applyEditorPrimitive(char === "\n" ? NEWLINE : char);
@@ -3188,8 +3162,6 @@ export function createModalEditor<TBase extends CustomEditorConstructor>(Base: T
   };
 }
 
-// Default class form, equivalent to the previous `class ModalEditor extends CustomEditor`.
-// Re-exported for backwards compatibility with consumers that import `ModalEditor` directly.
 export const ModalEditor = createModalEditor(CustomEditor);
 export type ModalEditor = InstanceType<typeof ModalEditor>;
 
