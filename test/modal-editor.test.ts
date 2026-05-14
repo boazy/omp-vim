@@ -266,6 +266,86 @@ type HelperRunResult = {
   stderr: string;
 };
 
+const WRAPPABLE_BASELINE_METHODS = [
+  "render",
+  "invalidate",
+  "handleInput",
+  "getText",
+  "setText",
+  "addToHistory",
+  "insertTextAtCursor",
+  "getExpandedText",
+  "setAutocompleteProvider",
+  "setPaddingX",
+  "setAutocompleteMaxVisible",
+  "onAction",
+  "getLines",
+  "getCursor",
+  "getMode",
+] as const;
+
+const WRAPPABLE_BASELINE_FIELDS = [
+  "onSubmit",
+  "onChange",
+  "borderColor",
+  "focused",
+  "disableSubmit",
+  "actionHandlers",
+  "onEscape",
+  "onCtrlD",
+  "onPasteImage",
+  "onExtensionShortcut",
+] as const;
+
+function assertWrappableBaselineSurface(editor: ModalEditor): void {
+  const surface = editor as unknown as Record<string, unknown>;
+
+  for (const method of WRAPPABLE_BASELINE_METHODS) {
+    assert.equal(typeof surface[method], "function", `expected ${method} method`);
+  }
+
+  for (const field of WRAPPABLE_BASELINE_FIELDS) {
+    assert.equal(field in surface, true, `expected ${field} field`);
+  }
+
+  assert.equal(surface.actionHandlers instanceof Map, true, "expected actionHandlers Map");
+  assert.equal(typeof surface.borderColor, "function", "expected borderColor function");
+  assert.equal(typeof surface.focused, "boolean", "expected focused boolean");
+  assert.equal(typeof surface.disableSubmit, "boolean", "expected disableSubmit boolean");
+}
+
+function createTransparentEditorWrapper(
+  editor: ModalEditor,
+  interceptedInputs: string[],
+): ModalEditor {
+  const source = editor as unknown as Record<PropertyKey, unknown>;
+
+  return new Proxy({} as Record<PropertyKey, unknown>, {
+    get(_target, property) {
+      if (property === "handleInput") {
+        return (data: string): void => {
+          interceptedInputs.push(data);
+          const handleInput = source.handleInput;
+          if (typeof handleInput !== "function") {
+            throw new TypeError("expected handleInput method");
+          }
+          handleInput.call(editor, data);
+        };
+      }
+
+      const value = source[property];
+      return typeof value === "function" ? value.bind(editor) : value;
+    },
+    set(_target, property, value) {
+      source[property] = value;
+      return true;
+    },
+    has(_target, property) {
+      return property in source;
+    },
+  }) as unknown as ModalEditor;
+}
+
 const CLIPBOARD_HELPER_TEST_TIMEOUT_MS = 5_000;
 
 async function getClipboardHelperSourceWithMock(mockModuleSource: string): Promise<string> {
@@ -1367,13 +1447,86 @@ describe("insert delegate factory integration", () => {
     assert.match(extension.notifications[1]?.message ?? "", /incompatible previous editor/i);
   });
 
-  it("falls back to the canonical ModalEditor when no previous factory exists", async () => {
+});
+
+describe("pi-vim wrappability", () => {
+  it("returns the canonical ModalEditor in INSERT mode when no previous factory exists", async () => {
     const extension = await installExtensionWithEditorFactory();
     const editor = extension.editorFactory(stubTui, stubTheme, stubKeybindings);
 
     // With no chain, the canonical class is used so `instanceof ModalEditor` works
     // for callers that rely on identity.
     assert.equal(editor instanceof ModalEditor, true);
+    assert.equal(editor.getMode(), "insert");
+    assert.equal(extension.notificationCalls, 0);
+  });
+
+  it("exposes the baseline method and field surface required by later decorators", async () => {
+    const extension = await installExtensionWithEditorFactory();
+    const editor = extension.editorFactory(stubTui, stubTheme, stubKeybindings);
+
+    assertWrappableBaselineSurface(editor);
+  });
+
+  it("supports in-place decoration of the returned instance", async () => {
+    const extension = await installExtensionWithEditorFactory();
+    const editor = extension.editorFactory(stubTui, stubTheme, stubKeybindings);
+    const interceptedInputs: string[] = [];
+    const originalHandleInput = editor.handleInput.bind(editor);
+    const originalRender = editor.render.bind(editor);
+
+    editor.handleInput = (data: string): void => {
+      interceptedInputs.push(data);
+      originalHandleInput(data);
+    };
+    editor.render = (width: number): string[] => {
+      const lines = originalRender(width);
+      const first = lines[0] ?? "";
+      return [`decorated:${first}`, ...lines.slice(1)];
+    };
+
+    const decorated = editor;
+
+    assert.equal(decorated, editor);
+    assertWrappableBaselineSurface(decorated);
+
+    decorated.handleInput("a");
+
+    assert.deepEqual(interceptedInputs, ["a"]);
+    assert.equal(decorated.getText(), "a");
+    assert.equal(decorated.getMode(), "insert");
+    assert.equal(decorated.render(20)[0]?.startsWith("decorated:"), true);
+  });
+
+  it("allows a transparent separate wrapper object to forward through to pi-vim", async () => {
+    const extension = await installExtensionWithEditorFactory();
+    const editor = extension.editorFactory(stubTui, stubTheme, stubKeybindings);
+    const interceptedInputs: string[] = [];
+    const wrapper = createTransparentEditorWrapper(editor, interceptedInputs);
+    const changedTexts: string[] = [];
+
+    assert.notEqual(wrapper, editor);
+    assertWrappableBaselineSurface(wrapper);
+
+    wrapper.onChange = (text: string) => changedTexts.push(text);
+    wrapper.focused = true;
+    wrapper.disableSubmit = true;
+
+    wrapper.handleInput("z");
+
+    assert.deepEqual(interceptedInputs, ["z"]);
+    assert.deepEqual(changedTexts, ["z"]);
+    assert.equal(wrapper.getText(), "z");
+    assert.equal(editor.getText(), "z");
+    assert.equal(editor.focused, true);
+    assert.equal(editor.disableSubmit, true);
+
+    wrapper.handleInput("\x1b");
+
+    assert.deepEqual(interceptedInputs, ["z", "\x1b"]);
+    assert.equal(wrapper.getMode(), "normal");
+    assert.equal(editor.getMode(), "normal");
+    assert.equal((wrapper.render(20).at(-1) ?? "").includes(" NORMAL "), true);
   });
 });
 
