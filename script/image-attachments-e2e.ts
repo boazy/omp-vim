@@ -394,17 +394,42 @@ function typeText(editor: EditorSurface, text: string): void {
   for (const char of text) editor.handleInput(char);
 }
 
-function assertImageAttachmentInserted(
+function assertImageAttachmentState(
+  editor: EditorSurface,
+  harness: RuntimeHarness,
+  messagePrefix: string,
+): void {
+  assertEqual(
+    editor.getText(),
+    "[Image #1] ",
+    `${messagePrefix} should insert an attachment placeholder`,
+  );
+
+  const latestWidget = harness.widgetCalls.at(-1);
+  if (!latestWidget?.content) fail(`${messagePrefix} should publish an attachments widget`);
+  assertIncludes(
+    latestWidget.content.join("\n"),
+    "[Image #1]",
+    `${messagePrefix} attachments widget should include the placeholder`,
+  );
+}
+
+function assertImageAttachmentInsertedByBracketedPaste(
   editor: EditorSurface,
   harness: RuntimeHarness,
   imagePath: string,
 ): void {
   editor.handleInput(bracketedPaste(imagePath));
-  assertEqual(editor.getText(), "[Image #1] ", "image paste should insert an attachment placeholder");
+  assertImageAttachmentState(editor, harness, "bracketed image paste");
+}
 
-  const latestWidget = harness.widgetCalls.at(-1);
-  if (!latestWidget?.content) fail("image paste should publish an attachments widget");
-  assertIncludes(latestWidget.content.join("\n"), "[Image #1]", "attachments widget should include the placeholder");
+function assertImageAttachmentInsertedByDirectInsert(
+  editor: EditorSurface,
+  harness: RuntimeHarness,
+  imagePath: string,
+): void {
+  editor.insertTextAtCursor(imagePath);
+  assertImageAttachmentState(editor, harness, "direct image path insert");
 }
 
 function assertPiVimModalBehavior(editor: EditorSurface): void {
@@ -428,7 +453,10 @@ async function verifyImageThenVim(workspace: string, imageExtension: PiExtension
   const imagePath = join(workspace, "fixture.png");
 
   const imageHarness = await installInOrder(workspace, imageExtension, "image-first");
-  assertImageAttachmentInserted(mountEditor(imageHarness), imageHarness, imagePath);
+  assertImageAttachmentInsertedByBracketedPaste(mountEditor(imageHarness), imageHarness, imagePath);
+
+  const directImageHarness = await installInOrder(workspace, imageExtension, "image-first");
+  assertImageAttachmentInsertedByDirectInsert(mountEditor(directImageHarness), directImageHarness, imagePath);
 
   const modalHarness = await installInOrder(workspace, imageExtension, "image-first");
   assertPiVimModalBehavior(mountEditor(modalHarness));
@@ -445,8 +473,13 @@ async function verifyVimThenImage(workspace: string, imageExtension: PiExtension
 
     const imageHarness = await installInOrder(workspace, imageExtension, "vim-first");
     const imageEditor = mountEditor(imageHarness);
-    assertImageAttachmentInserted(imageEditor, imageHarness, imagePath);
+    assertImageAttachmentInsertedByBracketedPaste(imageEditor, imageHarness, imagePath);
     assertEqual(imageEditor.getMode(), "insert", "image attachment handling should preserve INSERT mode");
+
+    const directImageHarness = await installInOrder(workspace, imageExtension, "vim-first");
+    const directImageEditor = mountEditor(directImageHarness);
+    assertImageAttachmentInsertedByDirectInsert(directImageEditor, directImageHarness, imagePath);
+    assertEqual(directImageEditor.getMode(), "insert", "direct image path insert should preserve INSERT mode");
 
     const modalHarness = await installInOrder(workspace, imageExtension, "vim-first");
     assertPiVimModalBehavior(mountEditor(modalHarness));
