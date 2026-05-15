@@ -305,13 +305,15 @@ Paste text ending in `\n` is treated as line-wise.
 - While a mirror is in flight, `p` / `P` use the shadow so immediate yank/delete → put stays ordered.
 - Pi owns the terminal clipboard backends; on Wayland external state may lag while the shadow stays authoritative for immediate puts.
 
-## composability with other custom-editor extensions
+## compatible editor delegation and load order
 
-Pi 0.71+ exposes [`ctx.ui.getEditorComponent()`](https://github.com/badlogic/pi-mono/issues/3935), which lets extensions wrap a previously installed custom editor instead of replacing it. pi-vim opts in: when another extension (for example, [`@jordyvd/pi-image-attachments`](https://www.npmjs.com/package/@jordyvd/pi-image-attachments)) has already installed a custom editor, pi-vim builds its `ModalEditor` as a subclass of that extension's class rather than the default `CustomEditor`.
+pi-vim intentionally uses Pi extension load order. Install pi-vim after another editor extension when Vim modal behavior should win. If that preceding editor is compatible, pi-vim preserves it as the INSERT-mode delegate and backing primitive editor.
 
-Practically: load order in `settings.json` no longer determines which extension wins. Whichever extension runs `session_start` first becomes the inner editor, and pi-vim wraps it.
+pi-vim owns NORMAL mode, EX mode, escape handling, operators, motions, registers, and the mode label. The preceding editor receives ordinary INSERT-mode input only when it exposes the required `CustomEditor` / TUI `Editor`-compatible surface and internals that pi-vim needs for text, cursor, rendering, and primitive edits.
 
-Extension authors composing on top of pi-vim should call `createModalEditor(Base)` (exported from this package) to get a `ModalEditor` subclass that extends `Base` instead of the default `CustomEditor`.
+If the preceding editor is incompatible or its factory fails, pi-vim replaces it with standalone pi-vim behavior and shows a warning for that mounted editor. [`@jordyvd/pi-image-attachments`](https://www.npmjs.com/package/@jordyvd/pi-image-attachments) is compatible when its editor is built on or preserves `CustomEditor` behavior.
+
+pi-vim remains structurally wrappable by later decorators that explicitly preserve pi-vim's surface. Prefer installing pi-vim last unless a later decorator documents pi-vim support.
 
 ---
 
@@ -356,10 +358,11 @@ Explicitly deferred:
 
 ## architecture notes
 
-- `index.ts` — `ModalEditor` subclass of `CustomEditor`; all key handling.
+- `index.ts` — installed `ModalEditor`; all key handling, with an optional compatible preceding editor as the INSERT-mode delegate/backing primitive editor.
 - `motions.ts` — pure motion calculation helpers (`findWordMotionTarget`,
   `findCharMotionTarget`); no side effects.
 - `types.ts` — shared types and escape-sequence constants.
+- `script/image-attachments-e2e.ts` — load-order E2E check for pi-vim with `@jordyvd/pi-image-attachments`.
 - `test/` — Node test runner suite; no browser / full runtime required.
 
 Run checks:
