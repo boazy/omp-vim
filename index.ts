@@ -105,6 +105,18 @@ export type CustomEditorCompatible = EditorComponent & {
   pushUndoSnapshot(): void;
 };
 
+type CustomEditorHandlerSurface = Partial<
+  Pick<
+    CustomEditor,
+    "onEscape" | "onCtrlD" | "onPasteImage" | "onExtensionShortcut" | "actionHandlers"
+  >
+>;
+
+type OwnedDelegateHandlers = Pick<
+  CustomEditorHandlerSurface,
+  "onEscape" | "onCtrlD" | "onPasteImage" | "onExtensionShortcut"
+>;
+
 export type CompatibilityResult = { compatible: true; editor: CustomEditorCompatible } | { compatible: false; reason: string };
 
 export const REQUIRED_COMPATIBLE_METHODS = ["render", "invalidate", "handleInput", "getText", "setText", "getLines", "getCursor", "insertTextAtCursor", "pushUndoSnapshot"] as const;
@@ -601,6 +613,7 @@ export function createModalEditor<TBase extends CustomEditorConstructor>(Base: T
   private readonly cursorShapeRuntime: CursorShapeRuntime | null;
   private lastCursorShapeSequence: CursorShapeSequence | null = null;
   private insertDelegate: CustomEditorCompatible | null = null;
+  private readonly ownedDelegateHandlers = new WeakMap<object, OwnedDelegateHandlers>();
 
   private unnamedRegister = "";
   private clipboardMirrorPolicy = DEFAULT_CLIPBOARD_MIRROR_POLICY;
@@ -1042,7 +1055,7 @@ export function createModalEditor<TBase extends CustomEditorConstructor>(Base: T
       data = filtered;
     }
 
-    if(this.mode!=="insert"&&this.keyUp!==true&&!p&&isKeyRelease(data))return;
+    if(this.mode!=="insert"&&!p&&isKeyRelease(data))return;
 
     if (this.isEscapeLikeInput(data)) {
       this.handleEscape();
@@ -1141,14 +1154,41 @@ export function createModalEditor<TBase extends CustomEditorConstructor>(Base: T
     const editor = this.insertDelegate;
     if (!editor) return;
 
+    const handlerSurface = editor as CustomEditorHandlerSurface;
+    const ownedHandlers = this.ownedDelegateHandlers.get(editor) ?? {};
+
+    if (!handlerSurface.onEscape || handlerSurface.onEscape === ownedHandlers.onEscape) {
+      handlerSurface.onEscape = this.onEscape;
+      ownedHandlers.onEscape = this.onEscape;
+    }
+    if (!handlerSurface.onCtrlD || handlerSurface.onCtrlD === ownedHandlers.onCtrlD) {
+      handlerSurface.onCtrlD = this.onCtrlD;
+      ownedHandlers.onCtrlD = this.onCtrlD;
+    }
+    if (!handlerSurface.onPasteImage || handlerSurface.onPasteImage === ownedHandlers.onPasteImage) {
+      handlerSurface.onPasteImage = this.onPasteImage;
+      ownedHandlers.onPasteImage = this.onPasteImage;
+    }
+    if (
+      !handlerSurface.onExtensionShortcut
+      || handlerSurface.onExtensionShortcut === ownedHandlers.onExtensionShortcut
+    ) {
+      handlerSurface.onExtensionShortcut = this.onExtensionShortcut;
+      ownedHandlers.onExtensionShortcut = this.onExtensionShortcut;
+    }
+    this.ownedDelegateHandlers.set(editor, ownedHandlers);
+
+    if (handlerSurface.actionHandlers instanceof Map) {
+      for (const [action, handler] of this.actionHandlers) {
+        handlerSurface.actionHandlers.set(action, handler);
+      }
+    } else {
+      handlerSurface.actionHandlers = this.actionHandlers;
+    }
+
     Object.assign(editor, {
       onSubmit: this.onSubmit,
       onChange: this.onChange,
-      onEscape: this.onEscape,
-      onCtrlD: this.onCtrlD,
-      onPasteImage: this.onPasteImage,
-      onExtensionShortcut: this.onExtensionShortcut,
-      actionHandlers: this.actionHandlers,
       borderColor: this.borderColor,
       focused: this.focused,
       disableSubmit: this.disableSubmit,

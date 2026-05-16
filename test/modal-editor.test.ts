@@ -1230,6 +1230,30 @@ describe("ModalEditor insert delegate routing", () => {
     assert.equal(delegate.wantsKeyRelease, false);
   });
 
+  it("does not let decorator key-release opt-in cancel pending NORMAL operators", () => {
+    const editor = new ModalEditor(stubTui, stubTheme, stubKeybindings);
+    editor.wantsKeyRelease = true;
+
+    for (const char of "hello world") {
+      editor.handleInput(char);
+    }
+    sendKeys(editor, ["\x1b", "0", "d", "\x1b[100;1:3u", "w"]);
+
+    assert.equal(editor.getText(), "world");
+    assert.equal(editor.getRegister(), "hello ");
+  });
+
+  it("does not let decorator key-release opt-in repeat NORMAL undo or redo", () => {
+    const { editor } = createEditorWithSpy("abcd");
+    editor.wantsKeyRelease = true;
+
+    sendKeys(editor, ["x", "\x1b[95;5u", "\x1b[95;5:3u"]);
+    assert.equal(editor.getText(), "abcd");
+
+    sendKeys(editor, ["\x1b[114;5u", "\x1b[114;5:3u"]);
+    assert.equal(editor.getText(), "bcd");
+  });
+
   it("does not expose non-boolean delegate key-release values", () => {
     const editor = new ModalEditor(stubTui, stubTheme, stubKeybindings);
     const delegate = createCompatibleDelegateEditor() as CompatibleDelegateEditor & {
@@ -1489,13 +1513,70 @@ describe("ModalEditor stock editor delegate surface", () => {
     assert.equal(snapshot.onCtrlD, onCtrlD);
     assert.equal(snapshot.onPasteImage, onPasteImage);
     assert.equal(snapshot.onExtensionShortcut, onExtensionShortcut);
-    assert.equal(snapshot.actionHandlers, editor.actionHandlers);
+    assert.equal(snapshot.actionHandlers instanceof Map, true);
+    assert.equal(
+      (snapshot.actionHandlers as Map<unknown, unknown>).get("app.interrupt"),
+      actionHandler,
+    );
     assert.equal(snapshot.borderColor, borderColor);
     assert.equal(snapshot.focused, true);
     assert.equal(snapshot.disableSubmit, true);
     assert.equal(snapshot.onChange, editor.onChange);
     assert.notEqual(snapshot.onChange, onChange);
     assert.deepEqual(changedTexts, ["z"]);
+  });
+
+  it("preserves delegate shortcut fields and merges action handlers", () => {
+    const editor = new ModalEditor(stubTui, stubTheme, stubKeybindings);
+    const delegate = createStockSurfaceDelegateEditor();
+    const delegateShortcutInputs: string[] = [];
+    const delegateOnEscape = () => {};
+    const delegateOnCtrlD = () => {};
+    const delegateOnPasteImage = () => {};
+    const delegateOnExtensionShortcut = (data: string) => {
+      delegateShortcutInputs.push(data);
+      return false;
+    };
+    const delegateActionHandler = () => {};
+    const editorActionHandler = () => {};
+
+    delegate.onEscape = delegateOnEscape;
+    delegate.onCtrlD = delegateOnCtrlD;
+    delegate.onPasteImage = delegateOnPasteImage;
+    delegate.onExtensionShortcut = delegateOnExtensionShortcut;
+    delegate.actionHandlers.set(
+      "app.exit" as Parameters<typeof delegate.actionHandlers.set>[0],
+      delegateActionHandler,
+    );
+    editor.onEscape = () => {};
+    editor.onCtrlD = () => {};
+    editor.onPasteImage = () => {};
+    editor.onExtensionShortcut = () => false;
+    editor.actionHandlers.set(
+      "app.interrupt" as Parameters<typeof editor.actionHandlers.set>[0],
+      editorActionHandler,
+    );
+    setInsertDelegateForTest(editor, delegate);
+
+    editor.handleInput("z");
+
+    const snapshot: DelegateSyncSnapshot | undefined = delegate.inputSyncSnapshots[0];
+    assert.ok(snapshot, "expected delegate to record sync state before input");
+    assert.equal(snapshot.onEscape, delegateOnEscape);
+    assert.equal(snapshot.onCtrlD, delegateOnCtrlD);
+    assert.equal(snapshot.onPasteImage, delegateOnPasteImage);
+    assert.equal(snapshot.onExtensionShortcut, delegateOnExtensionShortcut);
+    assert.deepEqual(delegateShortcutInputs, ["z"]);
+    assert.equal(snapshot.actionHandlers instanceof Map, true);
+    assert.notEqual(snapshot.actionHandlers, editor.actionHandlers);
+    assert.equal(
+      (snapshot.actionHandlers as Map<unknown, unknown>).get("app.exit"),
+      delegateActionHandler,
+    );
+    assert.equal(
+      (snapshot.actionHandlers as Map<unknown, unknown>).get("app.interrupt"),
+      editorActionHandler,
+    );
   });
 });
 
