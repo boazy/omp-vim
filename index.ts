@@ -104,57 +104,32 @@ export type CustomEditorCompatible = EditorComponent & {
   pushUndoSnapshot(): void;
 };
 
-export type CompatibilityResult =
-  | { compatible: true; editor: CustomEditorCompatible }
-  | { compatible: false; reason: string };
+export type CompatibilityResult = { compatible: true; editor: CustomEditorCompatible } | { compatible: false; reason: string };
 
-export const REQUIRED_COMPATIBLE_METHODS = [
-  "render",
-  "invalidate",
-  "handleInput",
-  "getText",
-  "setText",
-  "getLines",
-  "getCursor",
-  "insertTextAtCursor",
-] as const;
+export const REQUIRED_COMPATIBLE_METHODS = ["render", "invalidate", "handleInput", "getText", "setText", "getLines", "getCursor", "insertTextAtCursor", "pushUndoSnapshot"] as const;
 
 export function isRecord(value: unknown): value is Record<PropertyKey, unknown> {
   return typeof value === "object" && value !== null;
 }
 
 export function getCompatibility(editor: unknown): CompatibilityResult {
-  if (!isRecord(editor)) {
-    return { compatible: false, reason: "previous editor is not an object" };
-  }
-
-  const missingMethods = REQUIRED_COMPATIBLE_METHODS.filter(
-    (method) => typeof editor[method] !== "function",
-  );
-  if (missingMethods.length > 0) {
-    return {
-      compatible: false,
-      reason: `missing compatible editor methods: ${missingMethods.join(", ")}`,
-    };
-  }
-
+  const fail = (reason: string) => ({ compatible: false, reason }) as const;
+  if (!isRecord(editor)) return fail("not object");
+  const missing = REQUIRED_COMPATIBLE_METHODS.find((method) => typeof editor[method] !== "function");
+  if (missing) return fail(`no ${missing}`);
   const state = editor.state;
-  if (!isRecord(state)) {
-    return { compatible: false, reason: "missing compatible editor state" };
-  }
-  if (!Array.isArray(state.lines)) {
-    return { compatible: false, reason: "missing compatible editor state.lines" };
-  }
-  if (typeof state.cursorLine !== "number") {
-    return { compatible: false, reason: "missing compatible editor state.cursorLine" };
-  }
-  if (typeof state.cursorCol !== "number") {
-    return { compatible: false, reason: "missing compatible editor state.cursorCol" };
-  }
-  if (typeof editor.pushUndoSnapshot !== "function") {
-    return { compatible: false, reason: "missing compatible editor pushUndoSnapshot" };
-  }
-
+  if (!isRecord(state)) return fail("no state");
+  const { lines, cursorLine: line, cursorCol: col } = state;
+  if (!Array.isArray(lines)) return fail("no state.lines");
+  if (!lines.length) return fail("empty state.lines");
+  const badLine = lines.findIndex((line) => typeof line !== "string");
+  if (badLine >= 0) return fail(`bad state.lines[${badLine}]`);
+  if (typeof line !== "number") return fail("no state.cursorLine");
+  if (!Number.isInteger(line)) return fail("bad state.cursorLine");
+  if (typeof col !== "number") return fail("no state.cursorCol");
+  if (!Number.isInteger(col)) return fail("bad state.cursorCol");
+  if (line < 0 || line >= lines.length) return fail(`bad state.cursorLine:${line}/${lines.length}`);
+  if (col < 0 || col > lines[line].length) return fail(`bad state.cursorCol:${col}/${lines[line].length}`);
   return { compatible: true, editor: editor as unknown as CustomEditorCompatible };
 }
 
@@ -174,11 +149,7 @@ type ClipboardWriteFn = (text: string, signal: AbortSignal) => Promise<void>;
 type ClipboardReadFn = () => string | null;
 type ClipboardProcess = ReturnType<typeof spawn>;
 
-type ModeLabelColorizers = {
-  insert: (s: string) => string;
-  normal: (s: string) => string;
-  ex: (s: string) => string;
-};
+type ModeLabelColorizers=Record<"insert"|"normal"|"ex",(s:string)=>string>;
 
 type CursorShapeSequence =
   | typeof INSERT_CURSOR_SHAPE
@@ -598,73 +569,79 @@ class ClipboardMirror {
   }
 }
 
-// biome-ignore lint/suspicious/noExplicitAny: mixin constructor passthrough.
+// biome-ignore lint/suspicious/noExplicitAny: mixin.
 type CustomEditorConstructor = new (...args: any[]) => CustomEditor;
 
-/** Backward-compatible class factory; the installer uses INSERT delegation. */
 export function createModalEditor<TBase extends CustomEditorConstructor>(Base: TBase) {
   return class ModalEditor extends Base {
+  private keyUp?: boolean;
+  get wantsKeyRelease(): boolean | undefined { const w=this.insertDelegate?.wantsKeyRelease; return (w||this.keyUp)??w; }
+  set wantsKeyRelease(v: boolean | undefined) { this.keyUp = v; }
+
   private mode: Mode = "insert";
   private pendingMotion: PendingMotion = null;
   private pendingTextObject: TextObjectKind | null = null;
   private pendingOperator: PendingOperator = null;
-  private prefixCount: string = "";
-  private operatorCount: string = "";
-  private pendingG: boolean = false;
-  private pendingGCount: string = "";
-  private pendingReplace: boolean = false;
+  private prefixCount = "";
+  private operatorCount = "";
+  private pendingG = false;
+  private pendingGCount = "";
+  private pendingReplace = false;
   private pendingExCommand: string | null = null;
-  private acceptingBracketedPasteInExCommand: boolean = false;
-  private pendingEscWhileAcceptingBracketedPasteInExCommand: boolean = false;
+  private acceptingBracketedPasteInExCommand = false;
+  private pendingEscWhileAcceptingBracketedPasteInExCommand = false;
   private lastCharMotion: LastCharMotion | null = null;
-  private discardingBracketedPasteInNormalMode: boolean = false;
-  private pendingEscWhileDiscardingBracketedPasteInNormalMode: boolean = false;
+  private discardingBracketedPasteInNormalMode = false;
+  private pendingEscWhileDiscardingBracketedPasteInNormalMode = false;
   private wordBoundaryCache = new WordBoundaryCache();
   private readonly redoStack: EditorSnapshot[] = [];
   private currentTransition: TransitionState = "none";
-  private onChangeHooked: boolean = false;
+  private onChangeHooked = false;
   private labelColorizers: ModeLabelColorizers | null = null;
   private readonly cursorShapeRuntime: CursorShapeRuntime | null;
   private lastCursorShapeSequence: CursorShapeSequence | null = null;
   private insertDelegate: CustomEditorCompatible | null = null;
 
-  private unnamedRegister: string = "";
-  private clipboardMirrorPolicy: ClipboardMirrorPolicy = DEFAULT_CLIPBOARD_MIRROR_POLICY;
+  private unnamedRegister = "";
+  private clipboardMirrorPolicy = DEFAULT_CLIPBOARD_MIRROR_POLICY;
   private readonly clipboardMirror = new ClipboardMirror(writeClipboardInChildProcess);
-  private clipboardReadFn: ClipboardReadFn = readClipboardInChildProcess;
-  private quitFn: () => void = () => {};
+  private clipboardReadFn = readClipboardInChildProcess;
+  private quitFn = () => {};
   private notifyFn: (message: string) => void = () => {};
 
-  // biome-ignore lint/suspicious/noExplicitAny: rest-args passthrough for the mixin pattern.
+  // biome-ignore lint/suspicious/noExplicitAny: mixin.
   constructor(...args: any[]) {
+    const c=args[3];
+    const lc=c===null||(isRecord(c)&&["insert","normal","ex"].every((k)=>typeof c[k]==="function"))?args.splice(3,1)[0]:undefined;
     super(...args);
     this.cursorShapeRuntime = getCursorShapeRuntime(args[0]);
+    if (lc !== undefined) this.labelColorizers = lc;
   }
 
-  setColorizers(colorizers: ModeLabelColorizers | null): void {
+  setColorizers(colorizers: ModeLabelColorizers | null) {
     this.labelColorizers = colorizers ?? null;
   }
 
-  setClipboardFn(fn: (text: string, signal?: AbortSignal) => unknown): void {
+  setClipboardFn(fn: (text: string, signal?: AbortSignal) => unknown) {
     this.clipboardMirror.setWriteFn(async (text: string, signal: AbortSignal) => {
       await fn(text, signal);
     });
   }
-  setClipboardWriteTimeoutMs(timeoutMs: number): void {
+  setClipboardWriteTimeoutMs(timeoutMs: number) {
     this.clipboardMirror.setTimeoutMs(timeoutMs);
   }
-  setClipboardReadFn(fn: ClipboardReadFn): void {
+  setClipboardReadFn(fn: ClipboardReadFn) {
     this.clipboardReadFn = fn;
   }
-  setClipboardMirrorPolicy(policy: ClipboardMirrorPolicy): void {
+  setClipboardMirrorPolicy(policy: ClipboardMirrorPolicy) {
     this.clipboardMirrorPolicy = policy;
   }
   getClipboardMirrorPolicy(): ClipboardMirrorPolicy {
     return this.clipboardMirrorPolicy;
   }
-  setQuitFn(fn: () => void): void { this.quitFn = fn; }
-  setNotifyFn(fn: (message: string) => void): void { this.notifyFn = fn; }
-  setInsertDelegate(editor: CustomEditorCompatible): void { this.insertDelegate = editor; }
+  setQuitFn(fn: () => void) { this.quitFn = fn; }
+  setNotifyFn(fn: (message: string) => void) { this.notifyFn = fn; }
+  setInsertDelegate(editor: CustomEditorCompatible) { this.insertDelegate = editor; }
   getRegister(): string { return this.unnamedRegister; }
   setRegister(text: string): void { this.unnamedRegister = text; }
   getMode(): Mode { return this.mode; }
@@ -1155,8 +1132,7 @@ export function createModalEditor<TBase extends CustomEditorConstructor>(Base: T
   private applyEditorPrimitive(data: string): void {
     this.syncInsertDelegate();
     const editor = this.insertDelegate;
-    if (editor) editor.handleInput(data);
-    else super.handleInput(data);
+    if (editor) editor.handleInput(data); else super.handleInput(data);
   }
 
   private syncInsertDelegate(): void {
@@ -1218,7 +1194,7 @@ export function createModalEditor<TBase extends CustomEditorConstructor>(Base: T
       this.clearUnderlyingPasteStateIfActive();
       this.mode = "normal";
     } else {
-      super.handleInput("\x1b"); // pass escape to abort agent
+      super.handleInput("\x1b");
     }
   }
 
@@ -2708,7 +2684,7 @@ export function createModalEditor<TBase extends CustomEditorConstructor>(Base: T
     if (targetCol === null) return;
 
     this.lastCharMotion = { motion, char: targetChar };
-    this.deleteRange(col, targetCol, true); // char motions are inclusive
+    this.deleteRange(col, targetCol, true);
   }
 
   private handlePendingYank(data: string): void {
@@ -2776,7 +2752,7 @@ export function createModalEditor<TBase extends CustomEditorConstructor>(Base: T
     if (this.yankWithMotion(data)) {
       this.pendingOperator = null;
     } else {
-      this.cancelPendingOperator(data); // cancel on unrecognised motion
+      this.cancelPendingOperator(data);
     }
   }
 
@@ -2842,7 +2818,7 @@ export function createModalEditor<TBase extends CustomEditorConstructor>(Base: T
     if (targetCol === null) return;
 
     this.lastCharMotion = { motion, char: targetChar };
-    this.yankRange(col, targetCol, true); // char motions are inclusive
+    this.yankRange(col, targetCol, true);
   }
 
   private yankRange(col: number, targetCol: number, inclusive: boolean): void {
@@ -2944,7 +2920,7 @@ export function createModalEditor<TBase extends CustomEditorConstructor>(Base: T
     );
   }
 
-  private static readonly PUT_SIZE_LIMIT = 512 * 1024; // 512 KB safety cap
+  private static readonly PUT_SIZE_LIMIT = 512 * 1024;
 
   private getPasteRegisterText(): string {
     if (this.clipboardMirror.hasPendingWrite()) {
@@ -3169,8 +3145,11 @@ export function createModalEditor<TBase extends CustomEditorConstructor>(Base: T
   };
 }
 
-export const ModalEditor = createModalEditor(CustomEditor);
-export type ModalEditor = InstanceType<typeof ModalEditor>;
+type A=ConstructorParameters<typeof CustomEditor>;
+const C=createModalEditor(CustomEditor);
+type M=InstanceType<typeof C>;
+export const ModalEditor=C as new(a:A[0],b:A[1],c:A[2],d?:A[3]|ModeLabelColorizers|null)=>M;
+export type ModalEditor=M;
 
 export default function (pi: ExtensionAPI) {
   let cursorShapeCleanup: CursorShapeCleanup | null = null;

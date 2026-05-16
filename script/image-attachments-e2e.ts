@@ -127,12 +127,17 @@ function formatUnknownError(error: unknown): string {
 }
 
 function readPackageName(packageJsonPath: string): string | null {
+  let parsed: unknown;
   try {
-    const parsed = JSON.parse(readFileSync(packageJsonPath, "utf8")) as unknown;
-    if (isRecord(parsed) && typeof parsed.name === "string") return parsed.name;
-  } catch {
-    return null;
+    parsed = JSON.parse(readFileSync(packageJsonPath, "utf8")) as unknown;
+  } catch (error) {
+    throw new Error(
+      `FAIL-INFRA: unable to read or parse package.json at ${packageJsonPath}: ${formatUnknownError(error)}`,
+      { cause: error },
+    );
   }
+
+  if (isRecord(parsed) && typeof parsed.name === "string") return parsed.name;
   return null;
 }
 
@@ -142,21 +147,28 @@ function findPackageRoot(specifier: string): string {
     return nodeModulesCandidate;
   }
 
+  let dir: string;
   try {
-    let dir = dirname(currentRequire.resolve(specifier));
-
-    while (true) {
-      const packageJsonPath = join(dir, "package.json");
-      if (existsSync(packageJsonPath) && readPackageName(packageJsonPath) === specifier) {
-        return dir;
-      }
-
-      const parent = dirname(dir);
-      if (parent === dir) break;
-      dir = parent;
+    dir = dirname(currentRequire.resolve(specifier));
+  } catch (error) {
+    if (isRecord(error) && error.code === "MODULE_NOT_FOUND") {
+      throw new Error(`FAIL-INFRA: unable to locate installed package root for ${specifier}`);
     }
-  } catch {
-    // Fall through to the infrastructure error below.
+    throw new Error(
+      `FAIL-INFRA: unable to resolve installed package root for ${specifier}: ${formatUnknownError(error)}`,
+      { cause: error },
+    );
+  }
+
+  while (true) {
+    const packageJsonPath = join(dir, "package.json");
+    if (existsSync(packageJsonPath) && readPackageName(packageJsonPath) === specifier) {
+      return dir;
+    }
+
+    const parent = dirname(dir);
+    if (parent === dir) break;
+    dir = parent;
   }
 
   throw new Error(`FAIL-INFRA: unable to locate installed package root for ${specifier}`);
@@ -187,14 +199,23 @@ function packLocalImageAttachments(packageDir: string, workspace: string): strin
 }
 
 function resolveImageAttachmentsDependency(workspace: string): string {
+  const explicitCandidate = process.env.PI_IMAGE_ATTACHMENTS_PACKAGE_DIR;
+  if (explicitCandidate) {
+    if (!hasPackageName(explicitCandidate, IMAGE_PACKAGE_NAME)) {
+      throw new Error(
+        `FAIL-INFRA: PI_IMAGE_ATTACHMENTS_PACKAGE_DIR does not point to ${IMAGE_PACKAGE_NAME}: ${explicitCandidate}`,
+      );
+    }
+    return packLocalImageAttachments(explicitCandidate, workspace);
+  }
+
   const candidates = [
-    process.env.PI_IMAGE_ATTACHMENTS_PACKAGE_DIR,
     resolve(process.cwd(), "../pi-image-attachments"),
     resolve(process.cwd(), "../../../pi-image-attachments"),
   ];
 
   for (const candidate of candidates) {
-    if (candidate && hasPackageName(candidate, IMAGE_PACKAGE_NAME)) {
+    if (hasPackageName(candidate, IMAGE_PACKAGE_NAME)) {
       return packLocalImageAttachments(candidate, workspace);
     }
   }

@@ -10,6 +10,7 @@ import { spawn } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
+import type { CustomEditor } from "@mariozechner/pi-coding-agent";
 import { CURSOR_MARKER, visibleWidth } from "@mariozechner/pi-tui";
 import type { WordMotionClass } from "../motions.js";
 import type { WordMotionDirection, WordMotionTarget } from "../word-boundary-cache.js";
@@ -78,6 +79,24 @@ type PreviousEditorFactory = (
   theme: ConstructorParameters<typeof ModalEditor>[1],
   keybindings: ConstructorParameters<typeof ModalEditor>[2],
 ) => unknown;
+
+type ModalEditorFourthArg = ConstructorParameters<typeof ModalEditor>[3];
+type BaseEditorFourthArg = ConstructorParameters<typeof CustomEditor>[3];
+
+const modalEditorBaseOptionsArg: BaseEditorFourthArg = { paddingX: 1, autocompleteMaxVisible: 2 };
+const modalEditorFourthArgFixtures = [
+  modalEditorBaseOptionsArg satisfies ModalEditorFourthArg,
+  null satisfies ModalEditorFourthArg,
+  {
+    insert: (s: string) => s,
+    normal: (s: string) => s,
+    ex: (s: string) => s,
+  } satisfies ModalEditorFourthArg,
+];
+// @ts-expect-error ModalEditor constructor arg 4 must not widen to unknown.
+const modalEditorFourthArgRejectsNumber = 1 satisfies ModalEditorFourthArg;
+void modalEditorFourthArgFixtures;
+void modalEditorFourthArgRejectsNumber;
 
 type NotificationCall = { message: string; type: string };
 
@@ -779,6 +798,40 @@ describe("ex mini-mode", () => {
     assert.ok(footer.endsWith("\x1b[35m EX :_ \x1b[39m"));
   });
 
+  it("accepts legacy constructor colorizers for the INSERT label", () => {
+    const calls: string[] = [];
+    const colorizers = {
+      insert: (s: string) => {
+        calls.push(`insert:${s}`);
+        return `<insert>${s}</insert>`;
+      },
+      normal: (s: string) => {
+        calls.push(`normal:${s}`);
+        return `<normal>${s}</normal>`;
+      },
+      ex: (s: string) => {
+        calls.push(`ex:${s}`);
+        return `<ex>${s}</ex>`;
+      },
+    };
+    const editor = new ModalEditor(stubTui, stubTheme, stubKeybindings, colorizers);
+
+    const footer = editor.render(80).at(-1) ?? "";
+
+    assert.deepEqual(calls, ["insert: INSERT "]);
+    assert.ok(footer.endsWith("<insert> INSERT </insert>"));
+  });
+
+  it("passes constructor editor options to the base editor", () => {
+    const editor = new ModalEditor(stubTui, stubTheme, stubKeybindings, {
+      paddingX: 3,
+      autocompleteMaxVisible: 7,
+    });
+
+    assert.equal(editor.getPaddingX(), 3);
+    assert.equal(editor.getAutocompleteMaxVisible(), 7);
+  });
+
   it(":q refuses to quit when prompt has non-whitespace text", () => {
     const session = createEditorWithSpy("hello");
 
@@ -1126,6 +1179,78 @@ describe("ModalEditor insert delegate routing", () => {
     assert.deepEqual(editor.getCursor(), { line: 0, col: 1 });
   });
 
+  it("exposes delegate key-release opt-in and forwards INSERT release events", () => {
+    const editor = new ModalEditor(stubTui, stubTheme, stubKeybindings);
+    const delegate = createCompatibleDelegateEditor() as CompatibleDelegateEditor & {
+      wantsKeyRelease?: boolean;
+    };
+    const releaseSequence = "\x1b[97;1:3u";
+    delegate.wantsKeyRelease = true;
+
+    setInsertDelegateForTest(editor, delegate);
+    editor.handleInput(releaseSequence);
+
+    assert.equal((editor as unknown as { wantsKeyRelease?: boolean }).wantsKeyRelease, true);
+    assert.equal(delegate.wantsKeyRelease, true);
+    assert.deepEqual(delegate.rawInputs, [releaseSequence]);
+  });
+
+  it("allows decorators to set key-release opt-in without changing a delegate", () => {
+    const editor = new ModalEditor(stubTui, stubTheme, stubKeybindings);
+    const delegate = createCompatibleDelegateEditor() as CompatibleDelegateEditor & {
+      wantsKeyRelease?: boolean;
+    };
+    delegate.wantsKeyRelease = false;
+    setInsertDelegateForTest(editor, delegate);
+
+    editor.wantsKeyRelease = true;
+
+    assert.equal(editor.wantsKeyRelease, true);
+    assert.equal(delegate.wantsKeyRelease, false);
+  });
+
+  it("resyncs delegate key-release opt-in when delegate enables it during INSERT input", () => {
+    const editor = new ModalEditor(stubTui, stubTheme, stubKeybindings);
+    const delegate = createCompatibleDelegateEditor() as CompatibleDelegateEditor & {
+      wantsKeyRelease?: boolean;
+    };
+    const originalHandleInput = delegate.handleInput.bind(delegate);
+    delegate.wantsKeyRelease = false;
+    delegate.handleInput = (data: string) => {
+      originalHandleInput(data);
+      delegate.wantsKeyRelease = true;
+    };
+
+    setInsertDelegateForTest(editor, delegate);
+    assert.equal((editor as unknown as { wantsKeyRelease?: boolean }).wantsKeyRelease, false);
+
+    editor.handleInput("a");
+
+    assert.equal((editor as unknown as { wantsKeyRelease?: boolean }).wantsKeyRelease, true);
+    assert.deepEqual(delegate.rawInputs, ["a"]);
+  });
+
+  it("resyncs delegate key-release opt-in when delegate disables it during INSERT input", () => {
+    const editor = new ModalEditor(stubTui, stubTheme, stubKeybindings);
+    const delegate = createCompatibleDelegateEditor() as CompatibleDelegateEditor & {
+      wantsKeyRelease?: boolean;
+    };
+    const originalHandleInput = delegate.handleInput.bind(delegate);
+    delegate.wantsKeyRelease = true;
+    delegate.handleInput = (data: string) => {
+      originalHandleInput(data);
+      delegate.wantsKeyRelease = false;
+    };
+
+    setInsertDelegateForTest(editor, delegate);
+    assert.equal((editor as unknown as { wantsKeyRelease?: boolean }).wantsKeyRelease, true);
+
+    editor.handleInput("a");
+
+    assert.equal((editor as unknown as { wantsKeyRelease?: boolean }).wantsKeyRelease, false);
+    assert.deepEqual(delegate.rawInputs, ["a"]);
+  });
+
   it("consumes escape in INSERT mode without forwarding it to the delegate", () => {
     const editor = new ModalEditor(stubTui, stubTheme, stubKeybindings);
     const delegate = createCompatibleDelegateEditor();
@@ -1343,6 +1468,17 @@ describe("ModalEditor delegate render overlay", () => {
 });
 
 describe("insert delegate factory integration", () => {
+  function createMalformedStateDelegate(
+    mutate: (state: { lines: unknown[]; cursorLine: unknown; cursorCol: unknown }) => void,
+  ): CompatibleDelegateEditor {
+    const editor = createCompatibleDelegateEditor();
+    const state = (editor as unknown as {
+      state: { lines: unknown[]; cursorLine: unknown; cursorCol: unknown };
+    }).state;
+    mutate(state);
+    return editor;
+  }
+
   it("captures the previous factory before install and calls it once per mounted editor", async () => {
     let previousFactoryCalls = 0;
     const previousEditors: CompatibleDelegateEditor[] = [];
@@ -1419,6 +1555,80 @@ describe("insert delegate factory integration", () => {
         };
       },
       reason: /state|pushUndoSnapshot/,
+    },
+    {
+      name: "empty state lines",
+      makeEditor(): unknown {
+        return createMalformedStateDelegate((state) => {
+          state.lines = [];
+        });
+      },
+      reason: /empty state\.lines/i,
+    },
+    {
+      name: "non-string state line",
+      makeEditor(): unknown {
+        return createMalformedStateDelegate((state) => {
+          state.lines = ["ok", 42];
+        });
+      },
+      reason: /bad state\.lines\[1\]/i,
+    },
+    {
+      name: "NaN cursorLine",
+      makeEditor(): unknown {
+        return createMalformedStateDelegate((state) => {
+          state.cursorLine = Number.NaN;
+        });
+      },
+      reason: /bad state\.cursorLine/i,
+    },
+    {
+      name: "Infinity cursorCol",
+      makeEditor(): unknown {
+        return createMalformedStateDelegate((state) => {
+          state.cursorCol = Number.POSITIVE_INFINITY;
+        });
+      },
+      reason: /bad state\.cursorCol/i,
+    },
+    {
+      name: "fractional cursorLine",
+      makeEditor(): unknown {
+        return createMalformedStateDelegate((state) => {
+          state.cursorLine = 0.5;
+        });
+      },
+      reason: /bad state\.cursorLine/i,
+    },
+    {
+      name: "fractional cursorCol",
+      makeEditor(): unknown {
+        return createMalformedStateDelegate((state) => {
+          state.cursorCol = 0.5;
+        });
+      },
+      reason: /bad state\.cursorCol/i,
+    },
+    {
+      name: "cursorLine out of bounds",
+      makeEditor(): unknown {
+        return createMalformedStateDelegate((state) => {
+          state.lines = ["only"];
+          state.cursorLine = 1;
+        });
+      },
+      reason: /bad state\.cursorLine:1\/1/i,
+    },
+    {
+      name: "cursorCol out of bounds",
+      makeEditor(): unknown {
+        return createMalformedStateDelegate((state) => {
+          state.lines = ["abc"];
+          state.cursorCol = 4;
+        });
+      },
+      reason: /bad state\.cursorCol:4\/3/i,
     },
   ]) {
     it(`warns and falls back when the previous editor is incompatible: ${scenario.name}`, async () => {
