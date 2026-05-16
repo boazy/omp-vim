@@ -1,7 +1,3 @@
-/**
- * Types and constants for vim-mode extension
- */
-
 export type Mode = "normal" | "insert";
 export type CharMotion = "f" | "F" | "t" | "T";
 export type PendingMotion = CharMotion | null;
@@ -12,7 +8,6 @@ export interface LastCharMotion {
   char: string;
 }
 
-// Normal mode key mappings: key -> escape sequence (or null for mode switch)
 export const NORMAL_KEYS: Record<string, string | null> = {
   h: "\x1b[D", // left
   j: "\x1b[B", // down
@@ -33,10 +28,8 @@ export const NORMAL_KEYS: Record<string, string | null> = {
   O: null, // open line above
 };
 
-// Character motion keys that wait for a target character
 export const CHAR_MOTION_KEYS = new Set<string>(["f", "F", "t", "T"]);
 
-// Escape sequences
 export const ESC_LEFT = "\x1b[D";
 export const ESC_RIGHT = "\x1b[C";
 export const CTRL_A = "\x01"; // line start

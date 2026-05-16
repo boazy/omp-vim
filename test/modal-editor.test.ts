@@ -707,6 +707,16 @@ describe("mode transitions", () => {
     assert.equal(editor.getMode(), "normal");
   });
 
+  it("normal mode discards split paste payload that looks like key release", () => {
+    const { editor } = createEditorWithSpy("abc");
+
+    sendKeys(editor, ["\x1b[200~", "90:62:3F:A5\x1b[201~", "x"]);
+
+    assert.equal(editor.getText(), "bc");
+    assert.equal(editor.getRegister(), "a");
+    assert.equal(editor.getMode(), "normal");
+  });
+
   it("insert mode keeps bracketed paste payload text", () => {
     const { editor } = createEditorWithSpy("abc");
     sendKeys(editor, ["i", "\x1b[200~PASTE\x1b[201~"]);
@@ -949,6 +959,17 @@ describe("ex mini-mode", () => {
     sendKeys(session.editor, [":", "\x1b[200~", "q", "a", "!", "\x1b", "[201~", "\r"]);
 
     assert.equal(session.quitCalls, 1);
+    assert.equal(session.editor.getMode(), "normal");
+    assert.equal(session.editor.getText(), "hello");
+    assert.deepEqual(session.notifications, []);
+  });
+
+  it("ex mini-mode accepts split paste payload that looks like key release", () => {
+    const session = createEditorWithSpy("hello");
+
+    sendKeys(session.editor, [":", "\x1b[200~", "label:3u\x1b[201~"]);
+
+    assert.ok(session.editor.render(80).at(-1)?.endsWith(" EX :label:3u_ "));
     assert.equal(session.editor.getMode(), "normal");
     assert.equal(session.editor.getText(), "hello");
     assert.deepEqual(session.notifications, []);
@@ -1207,6 +1228,51 @@ describe("ModalEditor insert delegate routing", () => {
 
     assert.equal(editor.wantsKeyRelease, true);
     assert.equal(delegate.wantsKeyRelease, false);
+  });
+
+  it("does not expose non-boolean delegate key-release values", () => {
+    const editor = new ModalEditor(stubTui, stubTheme, stubKeybindings);
+    const delegate = createCompatibleDelegateEditor() as CompatibleDelegateEditor & {
+      wantsKeyRelease?: unknown;
+    };
+    delegate.wantsKeyRelease = "true";
+
+    setInsertDelegateForTest(editor, delegate);
+
+    assert.equal(editor.wantsKeyRelease, undefined);
+  });
+
+  it("does not let delegate key-release opt-in cancel pending NORMAL operators", () => {
+    const editor = new ModalEditor(stubTui, stubTheme, stubKeybindings);
+    const delegate = createCompatibleDelegateEditor() as CompatibleDelegateEditor & {
+      wantsKeyRelease?: boolean;
+    };
+    delegate.wantsKeyRelease = true;
+    setInsertDelegateForTest(editor, delegate);
+
+    for (const char of "hello world") {
+      editor.handleInput(char);
+    }
+    sendKeys(editor, ["\x1b", "0", "d", "\x1b[100;1:3u", "w"]);
+
+    assert.equal(editor.wantsKeyRelease, undefined);
+    assert.equal(editor.getText(), "world");
+    assert.equal(editor.getRegister(), "hello ");
+  });
+
+  it("does not let delegate key-release opt-in cancel or pollute EX mini-mode", () => {
+    const editor = new ModalEditor(stubTui, stubTheme, stubKeybindings);
+    const delegate = createCompatibleDelegateEditor() as CompatibleDelegateEditor & {
+      wantsKeyRelease?: boolean;
+    };
+    delegate.wantsKeyRelease = true;
+    setInsertDelegateForTest(editor, delegate);
+
+    sendKeys(editor, ["\x1b", ":", "\x1b[100;1:3u"]);
+
+    assert.equal(editor.wantsKeyRelease, undefined);
+    assert.ok(editor.render(80).at(-1)?.endsWith(" EX :_ "));
+    assert.equal(editor.getText(), "");
   });
 
   it("resyncs delegate key-release opt-in when delegate enables it during INSERT input", () => {

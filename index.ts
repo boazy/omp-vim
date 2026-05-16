@@ -9,6 +9,7 @@ import {
   type EditorComponent,
   CURSOR_MARKER,
   Key,
+  isKeyRelease,
   matchesKey,
   truncateToWidth,
   visibleWidth,
@@ -575,9 +576,8 @@ type CustomEditorConstructor = new (...args: any[]) => CustomEditor;
 export function createModalEditor<TBase extends CustomEditorConstructor>(Base: TBase) {
   return class ModalEditor extends Base {
   private keyUp?: boolean;
-  get wantsKeyRelease(): boolean | undefined { const w=this.insertDelegate?.wantsKeyRelease; return (w||this.keyUp)??w; }
-  set wantsKeyRelease(v: boolean | undefined) { this.keyUp = v; }
-
+  get wantsKeyRelease(){const w=this.mode==="insert"?this.insertDelegate?.wantsKeyRelease:undefined;return this.keyUp||w===true?true:this.keyUp??(w===false?false:undefined);}
+  set wantsKeyRelease(v:boolean|undefined){this.keyUp=v;}
   private mode: Mode = "insert";
   private pendingMotion: PendingMotion = null;
   private pendingTextObject: TextObjectKind | null = null;
@@ -1001,7 +1001,7 @@ export function createModalEditor<TBase extends CustomEditorConstructor>(Base: T
 
   handleInput(data: string): void {
     this.ensureOnChangeHook();
-
+    const p=this.acceptingBracketedPasteInExCommand||this.discardingBracketedPasteInNormalMode||data.includes(BRACKETED_PASTE_START);
     if (this.pendingExCommand !== null) {
       const normalized = this.normalizePendingExCommandInput(data);
       if (normalized === null) return;
@@ -1041,6 +1041,8 @@ export function createModalEditor<TBase extends CustomEditorConstructor>(Base: T
       if (filtered === null) return;
       data = filtered;
     }
+
+    if(this.mode!=="insert"&&this.keyUp!==true&&!p&&isKeyRelease(data))return;
 
     if (this.isEscapeLikeInput(data)) {
       this.handleEscape();
