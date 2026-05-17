@@ -717,6 +717,15 @@ describe("mode transitions", () => {
     assert.equal(editor.getMode(), "normal");
   });
 
+  it("normal mode filters key release remaining after split paste tail", () => {
+    const { editor } = createEditorWithSpy("abcd");
+
+    sendKeys(editor, ["x", "\x1b[200~", "\x1b[201~\x1b[95;5:3u"]);
+
+    assert.equal(editor.getText(), "bcd");
+    assert.equal(editor.getMode(), "normal");
+  });
+
   it("insert mode keeps bracketed paste payload text", () => {
     const { editor } = createEditorWithSpy("abc");
     sendKeys(editor, ["i", "\x1b[200~PASTE\x1b[201~"]);
@@ -970,6 +979,17 @@ describe("ex mini-mode", () => {
     sendKeys(session.editor, [":", "\x1b[200~", "label:3u\x1b[201~"]);
 
     assert.ok(session.editor.render(80).at(-1)?.endsWith(" EX :label:3u_ "));
+    assert.equal(session.editor.getMode(), "normal");
+    assert.equal(session.editor.getText(), "hello");
+    assert.deepEqual(session.notifications, []);
+  });
+
+  it("ex mini-mode filters key release remaining after split paste tail", () => {
+    const session = createEditorWithSpy("hello");
+
+    sendKeys(session.editor, [":", "\x1b[200~", "\x1b[201~\x1b[100;1:3u"]);
+
+    assert.ok(session.editor.render(80).at(-1)?.endsWith(" EX :_ "));
     assert.equal(session.editor.getMode(), "normal");
     assert.equal(session.editor.getText(), "hello");
     assert.deepEqual(session.notifications, []);
@@ -1384,6 +1404,30 @@ describe("ModalEditor insert delegate routing", () => {
 
     assert.deepEqual(delegate.rawInputs, []);
     assert.equal(editor.getMode(), "normal");
+  });
+
+  it("routes NORMAL non-printable fallthrough through the delegate", () => {
+    const editor = new ModalEditor(stubTui, stubTheme, stubKeybindings);
+    const delegate = createCompatibleDelegateEditor();
+    setInsertDelegateForTest(editor, delegate);
+
+    sendKeys(editor, ["a", "b", "c", "\x1b", "0", "\x1b[C", "x"]);
+
+    assert.equal(editor.getText(), "ac");
+    assert.equal(editor.getRegister(), "b");
+    assert.deepEqual(delegate.rawInputs, ["a", "b", "c", "\x01", "\x1b[C"]);
+  });
+
+  it("routes non-printable operator cancellation through the delegate", () => {
+    const editor = new ModalEditor(stubTui, stubTheme, stubKeybindings);
+    const delegate = createCompatibleDelegateEditor();
+    setInsertDelegateForTest(editor, delegate);
+
+    sendKeys(editor, ["a", "b", "c", "\x1b", "0", "d", "\x1b[C", "x"]);
+
+    assert.equal(editor.getText(), "ac");
+    assert.equal(editor.getRegister(), "b");
+    assert.deepEqual(delegate.rawInputs, ["a", "b", "c", "\x01", "\x1b[C"]);
   });
 });
 

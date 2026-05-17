@@ -1014,11 +1014,14 @@ export function createModalEditor<TBase extends CustomEditorConstructor>(Base: T
 
   handleInput(data: string): void {
     this.ensureOnChangeHook();
-    const p=this.acceptingBracketedPasteInExCommand||this.discardingBracketedPasteInNormalMode||data.includes(BRACKETED_PASTE_START);
+    let allowReleaseLikePastePayload = false;
     if (this.pendingExCommand !== null) {
+      const acceptsPastedPayload = this.acceptingBracketedPasteInExCommand
+        || data.includes(BRACKETED_PASTE_START);
       const normalized = this.normalizePendingExCommandInput(data);
       if (normalized === null) return;
       data = normalized;
+      allowReleaseLikePastePayload = acceptsPastedPayload && !data.includes("\x1b[");
     } else if (this.mode !== "insert") {
       if (this.discardingBracketedPasteInNormalMode) {
         if (this.isEscapeLikeInput(data)) {
@@ -1055,7 +1058,7 @@ export function createModalEditor<TBase extends CustomEditorConstructor>(Base: T
       data = filtered;
     }
 
-    if(this.mode!=="insert"&&!p&&isKeyRelease(data))return;
+    if(this.mode!=="insert"&&!allowReleaseLikePastePayload&&isKeyRelease(data))return;
 
     if (this.isEscapeLikeInput(data)) {
       this.handleEscape();
@@ -1236,7 +1239,7 @@ export function createModalEditor<TBase extends CustomEditorConstructor>(Base: T
       this.clearUnderlyingPasteStateIfActive();
       this.mode = "normal";
     } else {
-      super.handleInput("\x1b");
+      this.applyEditorPrimitive("\x1b");
     }
   }
 
@@ -1422,7 +1425,7 @@ export function createModalEditor<TBase extends CustomEditorConstructor>(Base: T
     this.prefixCount = "";
     this.operatorCount = "";
     if (!this.isPrintableChunk(data)) {
-      super.handleInput(data);
+      this.applyEditorPrimitive(data);
     }
   }
 
@@ -1962,7 +1965,7 @@ export function createModalEditor<TBase extends CustomEditorConstructor>(Base: T
     }
 
     if (this.isPrintableChunk(data)) return;
-    super.handleInput(data);
+    this.applyEditorPrimitive(data);
   }
 
   private openLineBelow(): void {
