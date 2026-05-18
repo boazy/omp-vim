@@ -315,6 +315,131 @@ If the preceding editor is incompatible or its factory fails, pi-vim replaces it
 
 pi-vim remains structurally wrappable by later decorators that explicitly preserve pi-vim's surface. Prefer installing pi-vim last unless a later decorator documents pi-vim support.
 
+For maintainers and extension authors, pi-vim intentionally mixes passthrough, replacement, and chained delegation depending on the editor surface. The exact composition rules are below.
+
+### delegation model
+
+Glossary:
+
+- **outer editor** — the `ModalEditor` instance installed by pi-vim via `setEditorComponent`.
+- **insert delegate** — a compatible previous editor stored as `insertDelegate`.
+- **primitive editor** — the object used for low-level text/cursor operations; this is `insertDelegate` when present, otherwise pi-vim itself.
+- **app action** — an entry in `actionHandlers`, such as `app.interrupt`, `app.exit`, or another keybinding-backed command.
+- **extension shortcut** — `onExtensionShortcut(data): boolean`; `true` means "handled, stop here" and `false` means "let the next layer try".
+- **delegate sync** — `syncInsertDelegate()`, which wires the outer editor's runtime surface onto the insert delegate before delegated input or rendering.
+
+pi-vim uses three delegation patterns:
+
+| pattern | where it applies | behavior |
+|---------|------------------|----------|
+| delegate / passthrough | Ordinary INSERT input and primitive text edits | pi-vim calls the insert delegate / backing primitive editor |
+| replace / block | NORMAL mode, EX mode, mode labels, same-key `actionHandlers` | pi-vim owns the behavior; the delegate does not also handle it |
+| run and delegate | Callback fields such as `onSubmit`, `onChange`, `onEscape`, `onCtrlD`, `onPasteImage`; `onExtensionShortcut` when unhandled | pi-vim preserves the outer callback and the delegate callback where the API supports chaining |
+
+Input flow:
+
+```text
+handleInput(data)
+  ├─ EX mode: pi-vim handles the mini-command line
+  ├─ NORMAL mode: pi-vim handles modal commands, operators, and motions
+  └─ INSERT mode:
+       ├─ paste / key-release guards run in pi-vim
+       └─ ordinary editor input goes to insertDelegate.handleInput(data)
+```
+
+pi-vim is therefore not a transparent wrapper. It is a modal router with an INSERT-mode backing editor.
+
+#### callback fields
+
+Single callback fields are chained when both pi-vim and the delegate may need to observe the event. For `onSubmit` and `onChange`, delegate sync installs a wrapper equivalent to:
+
+```text
+outer callback
+then delegate callback
+```
+
+`onEscape`, `onCtrlD`, and `onPasteImage` follow the same outer-then-delegate chaining shape.
+
+`onExtensionShortcut` is different because it has a boolean "handled" contract:
+
+```text
+outer onExtensionShortcut(data)
+  ├─ returns true  -> stop; delegate is blocked
+  └─ returns false -> delegate may try the shortcut
+```
+
+For example:
+
+```ts
+editor.onExtensionShortcut = (data) => {
+  if (data === "\x1bt") {
+    toggleTodoPanel();
+    return true;
+  }
+
+  return false;
+};
+```
+
+Returning `true` prevents the same key from also becoming text input or triggering another shortcut layer.
+
+#### actionHandlers
+
+`actionHandlers` are not chained. They are a map from one app action to one function:
+
+```ts
+Map<AppKeybinding, () => void>
+```
+
+For same-key actions, pi-vim uses **outer-wins** replacement. Chaining same-key app actions would double-run commands such as toggles, exits, or interrupts.
+
+`syncActionHandlers()` reconciles the delegate map with the outer map:
+
+1. Remove stale handlers that pi-vim previously copied, but only if the delegate still points at the exact copied function.
+2. Copy current outer handlers into the delegate.
+3. Preserve delegate-only handlers.
+4. Preserve delegate replacements only after the outer editor stops owning that action.
+
+If the outer editor still owns the same action key, the next sync overwrites the delegate's replacement again. Outer wins while it owns the action.
+
+Why copy handlers into the delegate at all?
+
+In INSERT mode, pi-vim delegates input to `insertDelegate.handleInput(data)`. At that point, the delegate's `CustomEditor.handleInput()` is the code checking app actions. If the runtime installed app handlers on the outer pi-vim editor, the delegate must see those handlers too, or delegated INSERT input would stop honoring app shortcuts.
+
+Example:
+
+```text
+top-level editor = pi-vim
+insert delegate = image attachments editor
+
+runtime installs app.openCommandPalette on pi-vim
+
+user presses ctrl-p in INSERT mode
+  -> pi-vim delegates to imageEditor.handleInput(ctrl-p)
+  -> imageEditor checks imageEditor.actionHandlers
+```
+
+Without `syncActionHandlers()`, `imageEditor.actionHandlers` would not contain `app.openCommandPalette`, so the shortcut would be lost while INSERT input is delegated.
+
+The identity check in `syncActionHandlers()` prevents destructive cleanup:
+
+```text
+pi-vim copied action B into delegate
+delegate later replaces B with its own handler
+outer pi-vim removes B
+syncActionHandlers sees delegate B is no longer the copied function
+so it leaves delegate B alone
+```
+
+So the rule is:
+
+```text
+same action key: outer wins while outer owns it
+delegate-only action: preserved
+copied outer action removed later: cleaned up
+delegate replacement after outer removal: preserved
+```
+
 ---
 
 ## known differences from full Vim
