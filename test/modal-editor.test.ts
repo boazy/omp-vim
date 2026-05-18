@@ -733,6 +733,15 @@ describe("mode transitions", () => {
     assert.equal(editor.getMode(), "insert");
   });
 
+  it("insert mode keeps split bracketed paste payload that looks like key release", () => {
+    const { editor } = createEditorWithSpy("abc");
+
+    sendKeys(editor, ["i", "\x1b[200~", "90:62:3F:A5\x1b[201~", "x"]);
+
+    assert.equal(editor.getText(), "90:62:3F:A5xabc");
+    assert.equal(editor.getMode(), "insert");
+  });
+
   it("escape from insert clears unterminated bracketed paste state", () => {
     const { editor } = createEditorWithSpy("abc");
 
@@ -1250,6 +1259,30 @@ describe("ModalEditor insert delegate routing", () => {
     assert.equal(delegate.wantsKeyRelease, false);
   });
 
+  it("does not decode INSERT release events when only a decorator opted in", () => {
+    const editor = new ModalEditor(stubTui, stubTheme, stubKeybindings);
+    editor.wantsKeyRelease = true;
+
+    editor.handleInput("\x1b[97;1:3u");
+
+    assert.equal(editor.getText(), "");
+  });
+
+  it("does not forward INSERT releases to a delegate that did not opt in", () => {
+    const editor = new ModalEditor(stubTui, stubTheme, stubKeybindings);
+    const delegate = createCompatibleDelegateEditor() as CompatibleDelegateEditor & {
+      wantsKeyRelease?: boolean;
+    };
+    delegate.wantsKeyRelease = false;
+    setInsertDelegateForTest(editor, delegate);
+    editor.wantsKeyRelease = true;
+
+    editor.handleInput("\x1b[97;1:3u");
+
+    assert.equal(editor.getText(), "");
+    assert.deepEqual(delegate.rawInputs, []);
+  });
+
   it("does not let decorator key-release opt-in cancel pending NORMAL operators", () => {
     const editor = new ModalEditor(stubTui, stubTheme, stubKeybindings);
     editor.wantsKeyRelease = true;
@@ -1570,6 +1603,49 @@ describe("ModalEditor stock editor delegate surface", () => {
     assert.deepEqual(changedTexts, ["z"]);
   });
 
+  it("chains delegate submit and change callbacks without duplicating on resync", () => {
+    const editor = new ModalEditor(stubTui, stubTheme, stubKeybindings);
+    const delegate = createStockSurfaceDelegateEditor();
+    const calls: string[] = [];
+    const editorOnSubmit = (text: string) => calls.push(`editor submit:${text}`);
+    const delegateOnSubmit = (text: string) => calls.push(`delegate submit:${text}`);
+    const editorOnChange = (text: string) => calls.push(`editor change:${text}`);
+    const delegateOnChange = (text: string) => calls.push(`delegate change:${text}`);
+
+    editor.onSubmit = editorOnSubmit;
+    editor.onChange = editorOnChange;
+    delegate.onSubmit = delegateOnSubmit;
+    delegate.onChange = delegateOnChange;
+    setInsertDelegateForTest(editor, delegate);
+
+    editor.handleInput("z");
+
+    const firstSnapshot: DelegateSyncSnapshot | undefined = delegate.inputSyncSnapshots[0];
+    assert.ok(firstSnapshot, "expected delegate to record first sync state before input");
+    assert.notEqual(firstSnapshot.onSubmit, editorOnSubmit);
+    assert.notEqual(firstSnapshot.onSubmit, delegateOnSubmit);
+    assert.notEqual(firstSnapshot.onChange, editor.onChange);
+    assert.notEqual(firstSnapshot.onChange, delegateOnChange);
+
+    (firstSnapshot.onSubmit as (text: string) => void)("sent");
+    editor.handleInput("q");
+
+    const secondSnapshot: DelegateSyncSnapshot | undefined = delegate.inputSyncSnapshots[1];
+    assert.ok(secondSnapshot, "expected delegate to record second sync state before input");
+    (secondSnapshot.onSubmit as (text: string) => void)("again");
+
+    assert.deepEqual(calls, [
+      "editor change:z",
+      "delegate change:z",
+      "editor submit:sent",
+      "delegate submit:sent",
+      "editor change:zq",
+      "delegate change:zq",
+      "editor submit:again",
+      "delegate submit:again",
+    ]);
+  });
+
   it("chains delegate shortcut fields and merges action handlers", () => {
     const editor = new ModalEditor(stubTui, stubTheme, stubKeybindings);
     const delegate = createStockSurfaceDelegateEditor();
@@ -1653,6 +1729,44 @@ describe("ModalEditor stock editor delegate surface", () => {
       (snapshot.actionHandlers as Map<unknown, unknown>).get("app.interrupt"),
       editorActionHandler,
     );
+  });
+
+  it("removes stale copied action handlers without deleting delegate-owned entries", () => {
+    const editor = new ModalEditor(stubTui, stubTheme, stubKeybindings);
+    const delegate = createStockSurfaceDelegateEditor();
+    const outerOnlyAction = "pi-vim.outer" as Parameters<typeof editor.actionHandlers.set>[0];
+    const delegateOnlyAction = "pi-vim.delegate" as Parameters<typeof editor.actionHandlers.set>[0];
+    const delegateReplacementAction = "pi-vim.delegate-replacement" as Parameters<typeof editor.actionHandlers.set>[0];
+    const editorOnlyHandler = () => {};
+    const editorReplacedHandler = () => {};
+    const delegateOnlyHandler = () => {};
+    const delegateReplacementHandler = () => {};
+
+    delegate.actionHandlers.set(delegateOnlyAction, delegateOnlyHandler);
+    editor.actionHandlers.set(outerOnlyAction, editorOnlyHandler);
+    editor.actionHandlers.set(delegateReplacementAction, editorReplacedHandler);
+    setInsertDelegateForTest(editor, delegate);
+
+    editor.handleInput("z");
+
+    const firstSnapshot: DelegateSyncSnapshot | undefined = delegate.inputSyncSnapshots[0];
+    assert.ok(firstSnapshot, "expected delegate to record first sync state before input");
+    const firstHandlers = firstSnapshot.actionHandlers as Map<unknown, unknown>;
+    assert.equal(firstHandlers.get(outerOnlyAction), editorOnlyHandler);
+    assert.equal(firstHandlers.get(delegateReplacementAction), editorReplacedHandler);
+    assert.equal(firstHandlers.get(delegateOnlyAction), delegateOnlyHandler);
+
+    delegate.actionHandlers.set(delegateReplacementAction, delegateReplacementHandler);
+    editor.actionHandlers.delete(outerOnlyAction);
+    editor.actionHandlers.delete(delegateReplacementAction);
+    editor.handleInput("q");
+
+    const secondSnapshot: DelegateSyncSnapshot | undefined = delegate.inputSyncSnapshots[1];
+    assert.ok(secondSnapshot, "expected delegate to record second sync state before input");
+    const secondHandlers = secondSnapshot.actionHandlers as Map<unknown, unknown>;
+    assert.equal(secondHandlers.has(outerOnlyAction), false);
+    assert.equal(secondHandlers.get(delegateReplacementAction), delegateReplacementHandler);
+    assert.equal(secondHandlers.get(delegateOnlyAction), delegateOnlyHandler);
   });
 
   it("routes NORMAL escape through the outer interrupt when the delegate has onEscape", () => {

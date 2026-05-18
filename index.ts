@@ -108,17 +108,37 @@ export type CustomEditorCompatible = EditorComponent & {
 type CustomEditorHandlerSurface = Partial<
   Pick<
     CustomEditor,
-    "onEscape" | "onCtrlD" | "onPasteImage" | "onExtensionShortcut" | "actionHandlers"
+    "onSubmit" | "onChange" | "onEscape" | "onCtrlD" | "onPasteImage" | "onExtensionShortcut" | "actionHandlers"
   >
 >;
 
-type DSH = Pick<CustomEditorHandlerSurface, "onEscape" | "onCtrlD" | "onPasteImage" | "onExtensionShortcut">;
-type ODH = DSH & { delegate?: DSH };
+type ActionHandlerMap = NonNullable<CustomEditorHandlerSurface["actionHandlers"]>;
+type ActionHandlerKey = Parameters<ActionHandlerMap["set"]>[0];
+type ActionHandler = Parameters<ActionHandlerMap["set"]>[1];
+type DSH = Pick<CustomEditorHandlerSurface, "onSubmit" | "onChange" | "onEscape" | "onCtrlD" | "onPasteImage" | "onExtensionShortcut">;
+type ODH = DSH & { delegate?: DSH; actionHandlers?: Map<ActionHandlerKey, ActionHandler> };
+type TDK = "onSubmit" | "onChange";
 type VDK = "onEscape" | "onCtrlD" | "onPasteImage";
 
 function chainVoid(o: (() => void) | undefined, d: (() => void) | undefined): (() => void) | undefined { return o && d !== o ? d ? () => { o(); d(); } : o : d; }
 
+function chainText(o: ((text: string) => void) | undefined, d: ((text: string) => void) | undefined): ((text: string) => void) | undefined { return o && d !== o ? d ? (text: string) => { o(text); d(text); } : o : d; }
+
 function chainExt(o: ((data: string) => boolean) | undefined, d: ((data: string) => boolean) | undefined): ((data: string) => boolean) | undefined { return o && d !== o ? d ? (data: string) => o(data) || d(data) : o : d; }
+
+function syncText(
+  s: CustomEditorHandlerSurface,
+  o: ODH,
+  k: TDK,
+  h: ((text: string) => void) | undefined,
+): void {
+  const d = o.delegate ?? {};
+  const p = s[k] === o[k] ? d[k] : s[k];
+  s[k] = chainText(h, p);
+  o[k] = s[k];
+  d[k] = p;
+  o.delegate = d;
+}
 
 function syncVoid(
   s: CustomEditorHandlerSurface,
@@ -145,6 +165,28 @@ function syncExt(
   o.onExtensionShortcut = s.onExtensionShortcut;
   d.onExtensionShortcut = p;
   o.delegate = d;
+}
+
+function syncActionHandlers(
+  delegateHandlers: ActionHandlerMap,
+  ownedHandlers: ODH,
+  sourceHandlers: ActionHandlerMap,
+): void {
+  const ownedActions = ownedHandlers.actionHandlers ?? new Map<ActionHandlerKey, ActionHandler>();
+
+  for (const [action, handler] of ownedActions) {
+    if (!sourceHandlers.has(action) && delegateHandlers.get(action) === handler) {
+      delegateHandlers.delete(action);
+      ownedActions.delete(action);
+    }
+  }
+
+  for (const [action, handler] of sourceHandlers) {
+    delegateHandlers.set(action, handler);
+    ownedActions.set(action, handler);
+  }
+
+  ownedHandlers.actionHandlers = ownedActions;
 }
 
 export type CompatibilityResult = { compatible: true; editor: CustomEditorCompatible } | { compatible: false; reason: string };
@@ -635,6 +677,7 @@ export function createModalEditor<TBase extends CustomEditorConstructor>(Base: T
   private lastCharMotion: LastCharMotion | null = null;
   private discardingBracketedPasteInNormalMode = false;
   private pendingEscWhileDiscardingBracketedPasteInNormalMode = false;
+  private forwardingBracketedPasteInInsertMode = false;
   private wordBoundaryCache = new WordBoundaryCache();
   private readonly redoStack: EditorSnapshot[] = [];
   private currentTransition: TransitionState = "none";
@@ -1042,6 +1085,26 @@ export function createModalEditor<TBase extends CustomEditorConstructor>(Base: T
     }
   }
 
+  private shouldBypassReleaseFilterForInsertPaste(data: string): boolean {
+    if (this.mode !== "insert" || this.pendingExCommand !== null) return false;
+
+    if (this.forwardingBracketedPasteInInsertMode) {
+      if (data.includes(BRACKETED_PASTE_END)) {
+        this.forwardingBracketedPasteInInsertMode = false;
+      }
+      return true;
+    }
+
+    const start = data.indexOf(BRACKETED_PASTE_START);
+    if (start === -1) return false;
+
+    const afterStart = data.slice(start + BRACKETED_PASTE_START.length);
+    if (!afterStart.includes(BRACKETED_PASTE_END)) {
+      this.forwardingBracketedPasteInInsertMode = true;
+    }
+    return true;
+  }
+
   handleInput(data: string): void {
     this.ensureOnChangeHook();
     let allowReleaseLikePastePayload = false;
@@ -1088,7 +1151,10 @@ export function createModalEditor<TBase extends CustomEditorConstructor>(Base: T
       data = filtered;
     }
 
-    if(this.mode!=="insert"&&!allowReleaseLikePastePayload&&isKeyRelease(data))return;
+    const allowInsertPastePayload = this.shouldBypassReleaseFilterForInsertPaste(data);
+    const delegateWantsInsertKeyRelease = this.mode === "insert"
+      && this.insertDelegate?.wantsKeyRelease === true;
+    if(!allowReleaseLikePastePayload&&!allowInsertPastePayload&&!delegateWantsInsertKeyRelease&&isKeyRelease(data))return;
 
     if (this.isEscapeLikeInput(data)) {
       this.handleEscape();
@@ -1207,16 +1273,18 @@ export function createModalEditor<TBase extends CustomEditorConstructor>(Base: T
     this.ownedDelegateHandlers.set(editor, ownedHandlers);
 
     if (handlerSurface.actionHandlers instanceof Map) {
-      for (const [action, handler] of this.actionHandlers) {
-        handlerSurface.actionHandlers.set(action, handler);
-      }
+      // Outer app actions intentionally replace same-key delegate actions;
+      // syncActionHandlers only avoids stale copied entries. See pi-vim.spec
+      // ADR 0008.
+      syncActionHandlers(handlerSurface.actionHandlers, ownedHandlers, this.actionHandlers);
     } else {
       handlerSurface.actionHandlers = this.actionHandlers;
     }
 
+    syncText(handlerSurface, ownedHandlers, "onSubmit", this.onSubmit);
+    syncText(handlerSurface, ownedHandlers, "onChange", this.onChange);
+
     Object.assign(editor, {
-      onSubmit: this.onSubmit,
-      onChange: this.onChange,
       borderColor: this.borderColor,
       focused: this.focused,
       disableSubmit: this.disableSubmit,
@@ -1261,6 +1329,7 @@ export function createModalEditor<TBase extends CustomEditorConstructor>(Base: T
       return;
     }
     if (this.mode === "insert") {
+      this.forwardingBracketedPasteInInsertMode = false;
       this.clearUnderlyingPasteStateIfActive();
       this.mode = "normal";
     } else {
