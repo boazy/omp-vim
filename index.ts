@@ -119,6 +119,7 @@ type CustomEditorHandlerSurface = Partial<
 type ActionHandlerMap = NonNullable<CustomEditorHandlerSurface["actionHandlers"]>;
 type ActionHandlerKey = Parameters<ActionHandlerMap["set"]>[0];
 type ActionHandler = Parameters<ActionHandlerMap["set"]>[1];
+type ExSegment = { text: string; pasted: boolean };
 type DSH = Pick<CustomEditorHandlerSurface, "onSubmit" | "onChange" | "onEscape" | "onCtrlD" | "onPasteImage" | "onExtensionShortcut">;
 type ODH = DSH & { delegate?: DSH; actionHandlers?: Map<ActionHandlerKey, ActionHandler> };
 type TDK = "onSubmit" | "onChange";
@@ -1036,9 +1037,19 @@ export function createModalEditor<TBase extends CustomEditorConstructor>(Base: T
     return matchesKey(data, "escape") || matchesKey(data, "ctrl+[");
   }
 
-  private normalizePendingExCommandInput(data: string): string | null {
+  private normalizePendingExCommandInput(data: string): ExSegment[] | null {
     let chunk = data;
-    let normalized = "";
+    const segments: ExSegment[] = [];
+    const appendSegment = (text: string, pasted: boolean) => {
+      if (!text) return;
+      const previous = segments.at(-1);
+      if (previous?.pasted === pasted) {
+        previous.text += text;
+        return;
+      }
+      segments.push({ text, pasted });
+    };
+    const normalizedOrNull = () => segments.length > 0 ? segments : null;
 
     while (true) {
       if (this.acceptingBracketedPasteInExCommand) {
@@ -1048,46 +1059,46 @@ export function createModalEditor<TBase extends CustomEditorConstructor>(Base: T
             this.acceptingBracketedPasteInExCommand = false;
             chunk = chunk.slice(BRACKETED_PASTE_END_TAIL.length);
             if (chunk.length === 0) {
-              return normalized.length > 0 ? normalized : null;
+              return normalizedOrNull();
             }
             continue;
           }
 
-          normalized += "\x1b";
+          appendSegment("\x1b", true);
           this.pendingEscWhileAcceptingBracketedPasteInExCommand = false;
         }
 
         const end = chunk.indexOf(BRACKETED_PASTE_END);
         if (end !== -1) {
-          normalized += chunk.slice(0, end);
+          appendSegment(chunk.slice(0, end), true);
           this.acceptingBracketedPasteInExCommand = false;
           chunk = chunk.slice(end + BRACKETED_PASTE_END.length);
           if (chunk.length === 0) {
-            return normalized.length > 0 ? normalized : null;
+            return normalizedOrNull();
           }
           continue;
         }
 
         if (this.isEscapeLikeInput(chunk)) {
           this.pendingEscWhileAcceptingBracketedPasteInExCommand = true;
-          return normalized.length > 0 ? normalized : null;
+          return normalizedOrNull();
         }
 
-        normalized += chunk;
-        return normalized.length > 0 ? normalized : null;
+        appendSegment(chunk, true);
+        return normalizedOrNull();
       }
 
       const start = chunk.indexOf(BRACKETED_PASTE_START);
       if (start === -1) {
-        normalized += chunk;
-        return normalized.length > 0 ? normalized : null;
+        appendSegment(chunk, false);
+        return normalizedOrNull();
       }
 
-      normalized += chunk.slice(0, start);
+      appendSegment(chunk.slice(0, start), false);
       chunk = chunk.slice(start + BRACKETED_PASTE_START.length);
       this.acceptingBracketedPasteInExCommand = true;
       if (chunk.length === 0) {
-        return normalized.length > 0 ? normalized : null;
+        return normalizedOrNull();
       }
     }
   }
@@ -1152,14 +1163,21 @@ export function createModalEditor<TBase extends CustomEditorConstructor>(Base: T
 
   handleInput(data: string): void {
     this.ensureOnChangeHook();
-    let allowReleaseLikePastePayload = false;
     if (this.pendingExCommand !== null) {
-      const acceptsPastedPayload = this.acceptingBracketedPasteInExCommand
-        || data.includes(BRACKETED_PASTE_START);
-      const normalized = this.normalizePendingExCommandInput(data);
-      if (normalized === null) return;
-      data = normalized;
-      allowReleaseLikePastePayload = acceptsPastedPayload && !data.includes("\x1b[");
+      const segments = this.normalizePendingExCommandInput(data);
+      if (segments === null) return;
+      for (const segment of segments) {
+        if (!segment.pasted) {
+          if (isKeyReleaseEvent(segment.text)) continue;
+          if (this.isEscapeLikeInput(segment.text)) {
+            this.handleEscape();
+            return;
+          }
+        }
+        this.handlePendingExCommand(segment.text, segment.pasted);
+        if (this.pendingExCommand === null) return;
+      }
+      return;
     } else if (this.mode !== "insert") {
       if (this.discardingBracketedPasteInNormalMode) {
         if (this.isEscapeLikeInput(data)) {
@@ -1199,8 +1217,7 @@ export function createModalEditor<TBase extends CustomEditorConstructor>(Base: T
     const allowInsertPastePayload = this.shouldBypassReleaseFilterForInsertPaste(data);
     const delegateWantsInsertKeyRelease = this.mode === "insert"
       && this.insertDelegate?.wantsKeyRelease === true;
-    if (!allowReleaseLikePastePayload
-      && !allowInsertPastePayload
+    if (!allowInsertPastePayload
       && !delegateWantsInsertKeyRelease
       && isKeyReleaseEvent(data)
     ) return;
@@ -1324,14 +1341,13 @@ export function createModalEditor<TBase extends CustomEditorConstructor>(Base: T
     syncExt(handlerSurface, ownedHandlers, this.onExtensionShortcut);
     this.ownedDelegateHandlers.set(editor, ownedHandlers);
 
-    if (handlerSurface.actionHandlers instanceof Map) {
-      // Outer app actions intentionally replace same-key delegate actions;
-      // syncActionHandlers only avoids stale copied entries. See pi-vim.spec
-      // ADR 0008.
-      syncActionHandlers(handlerSurface.actionHandlers, ownedHandlers, this.actionHandlers);
-    } else {
-      handlerSurface.actionHandlers = this.actionHandlers;
+    if (!(handlerSurface.actionHandlers instanceof Map)) {
+      handlerSurface.actionHandlers = new Map<ActionHandlerKey, ActionHandler>();
     }
+    // Outer app actions intentionally replace same-key delegate actions;
+    // syncActionHandlers only avoids stale copied entries. See pi-vim.spec
+    // ADR 0008.
+    syncActionHandlers(handlerSurface.actionHandlers, ownedHandlers, this.actionHandlers);
 
     syncText(handlerSurface, ownedHandlers, "onSubmit", this.onSubmit);
     syncText(handlerSurface, ownedHandlers, "onChange", this.onChange);
@@ -1415,9 +1431,10 @@ export function createModalEditor<TBase extends CustomEditorConstructor>(Base: T
     this.pendingExCommand = current.slice(0, previousGrapheme.end);
   }
 
-  private handlePendingExCommandControlChunk(data: string): boolean {
+  private handlePendingExCommandControlChunk(data: string, allowLiteralControls = false): boolean {
     if (
-      !data.includes("\r")
+      !allowLiteralControls
+      && !data.includes("\r")
       && !data.includes("\n")
       && !data.includes("\x7f")
       && !data.includes("\x08")
@@ -1450,6 +1467,10 @@ export function createModalEditor<TBase extends CustomEditorConstructor>(Base: T
 
       const codePoint = char.codePointAt(0);
       if (codePoint === undefined || codePoint < 32 || codePoint === 127) {
+        if (allowLiteralControls) {
+          printable += char;
+          continue;
+        }
         this.clearPendingExCommand();
         return true;
       }
@@ -1461,7 +1482,7 @@ export function createModalEditor<TBase extends CustomEditorConstructor>(Base: T
     return true;
   }
 
-  private handlePendingExCommand(data: string): void {
+  private handlePendingExCommand(data: string, allowLiteralControls = false): void {
     if (this.isEnterLikeInput(data)) {
       this.submitPendingExCommand();
       return;
@@ -1472,7 +1493,7 @@ export function createModalEditor<TBase extends CustomEditorConstructor>(Base: T
       return;
     }
 
-    if (this.handlePendingExCommandControlChunk(data)) {
+    if (this.handlePendingExCommandControlChunk(data, allowLiteralControls)) {
       return;
     }
 

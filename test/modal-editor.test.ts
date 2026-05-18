@@ -1002,6 +1002,17 @@ describe("ex mini-mode", () => {
     assert.deepEqual(session.notifications, []);
   });
 
+  it("ex mini-mode keeps pasted CSI text that looks like key release", () => {
+    const session = createEditorWithSpy("hello");
+
+    sendKeys(session.editor, [":", "\x1b[200~\x1b[100;1:3u\x1b[201~"]);
+
+    assert.ok(session.editor.render(80).at(-1)?.endsWith(" EX :\x1b[100;1:3u_ "));
+    assert.equal(session.editor.getMode(), "normal");
+    assert.equal(session.editor.getText(), "hello");
+    assert.deepEqual(session.notifications, []);
+  });
+
   it("ex mini-mode filters key release remaining after split paste tail", () => {
     const session = createEditorWithSpy("hello");
 
@@ -1805,6 +1816,39 @@ describe("ModalEditor stock editor delegate surface", () => {
     assert.equal(secondHandlers.has(outerOnlyAction), false);
     assert.equal(secondHandlers.get(delegateReplacementAction), delegateReplacementHandler);
     assert.equal(secondHandlers.get(delegateOnlyAction), delegateOnlyHandler);
+  });
+
+  it("creates a delegate-owned action handler map when the delegate lacks one", () => {
+    const editor = new ModalEditor(stubTui, stubTheme, stubKeybindings);
+    const delegate = createStockSurfaceDelegateEditor();
+    const outerOnlyAction = "pi-vim.outer" as Parameters<typeof editor.actionHandlers.set>[0];
+    const delegateOnlyAction = "pi-vim.delegate" as Parameters<typeof editor.actionHandlers.set>[0];
+    const editorOnlyHandler = () => {};
+    const delegateOnlyHandler = () => {};
+
+    (delegate as unknown as { actionHandlers?: unknown }).actionHandlers = undefined;
+    editor.actionHandlers.set(outerOnlyAction, editorOnlyHandler);
+    setInsertDelegateForTest(editor, delegate);
+
+    editor.handleInput("z");
+
+    const firstSnapshot: DelegateSyncSnapshot | undefined = delegate.inputSyncSnapshots[0];
+    assert.ok(firstSnapshot, "expected delegate to record first sync state before input");
+    assert.equal(firstSnapshot.actionHandlers instanceof Map, true);
+    assert.notEqual(firstSnapshot.actionHandlers, editor.actionHandlers);
+    const firstHandlers = firstSnapshot.actionHandlers as Map<unknown, unknown>;
+    assert.equal(firstHandlers.get(outerOnlyAction), editorOnlyHandler);
+
+    firstHandlers.set(delegateOnlyAction, delegateOnlyHandler);
+    editor.actionHandlers.delete(outerOnlyAction);
+    editor.handleInput("q");
+
+    const secondSnapshot: DelegateSyncSnapshot | undefined = delegate.inputSyncSnapshots[1];
+    assert.ok(secondSnapshot, "expected delegate to record second sync state before input");
+    const secondHandlers = secondSnapshot.actionHandlers as Map<unknown, unknown>;
+    assert.equal(secondHandlers.has(outerOnlyAction), false);
+    assert.equal(secondHandlers.get(delegateOnlyAction), delegateOnlyHandler);
+    assert.equal(editor.actionHandlers.has(delegateOnlyAction), false);
   });
 
   it("routes NORMAL escape through the outer interrupt when the delegate has onEscape", () => {
