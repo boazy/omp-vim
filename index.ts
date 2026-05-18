@@ -116,8 +116,6 @@ type DSH = Pick<CustomEditorHandlerSurface, "onEscape" | "onCtrlD" | "onPasteIma
 type ODH = DSH & { delegate?: DSH };
 type VDK = "onEscape" | "onCtrlD" | "onPasteImage";
 
-const PVF = Symbol.for("pi-vim");
-
 function chainVoid(o: (() => void) | undefined, d: (() => void) | undefined): (() => void) | undefined { return o && d !== o ? d ? () => { o(); d(); } : o : d; }
 
 function chainExt(o: ((data: string) => boolean) | undefined, d: ((data: string) => boolean) | undefined): ((data: string) => boolean) | undefined { return o && d !== o ? d ? (data: string) => o(data) || d(data) : o : d; }
@@ -3240,10 +3238,12 @@ export default function (pi: ExtensionAPI) {
       normal: (s: string) => t.fg("borderAccent", reverseVideo(s)),
       ex: (s: string) => t.fg("warning", reverseVideo(s)),
     } : null;
-    const f = ctx.ui.getEditorComponent?.();
-    const prev=typeof f==="function"&&PVF in f?(f as typeof f&{[PVF]?:typeof f})[PVF]:f;
+    // Pi clears the editor factory before re-emitting session_start on reload
+    // or session replacement. Trust that contract instead of tagging pi-vim
+    // factories; see pi-vim.spec ADR 0007.
+    const previousFactory = ctx.ui.getEditorComponent?.();
 
-    const vf: NonNullable<typeof prev> = (tui, theme, kb) => {
+    ctx.ui.setEditorComponent((tui, theme, kb) => {
       cursorShapeCleanup = enableCursorShapeSupport(tui);
 
       const editor = new ModalEditor(tui, theme, kb);
@@ -3252,9 +3252,9 @@ export default function (pi: ExtensionAPI) {
       editor.setQuitFn(() => ctx.shutdown());
       editor.setNotifyFn((message) => ctx.ui.notify(message, "warning"));
 
-      if (prev) {
+      if (previousFactory) {
         try {
-          const previousEditor = prev(tui, theme, kb);
+          const previousEditor = previousFactory(tui, theme, kb);
           const compatibility = getCompatibility(previousEditor);
           if (compatibility.compatible) {
             editor.setInsertDelegate(compatibility.editor);
@@ -3273,8 +3273,7 @@ export default function (pi: ExtensionAPI) {
       }
 
       return editor;
-    };
-    ctx.ui.setEditorComponent(Object.assign(vf as object,{[PVF]:prev}) as typeof vf);
+    });
   });
 
   pi.on("session_shutdown", () => {

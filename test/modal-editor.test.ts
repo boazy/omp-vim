@@ -1749,65 +1749,6 @@ describe("insert delegate factory integration", () => {
     assert.equal(extension.notificationCalls, 0);
   });
 
-  it("reuses the original factory instead of wrapping its own later session factory", async () => {
-    const pi = createExtensionApiHarness();
-    let previousFactoryCalls = 0;
-    const previousEditors: CompatibleDelegateEditor[] = [];
-    const previousFactory: PreviousEditorFactory = () => {
-      previousFactoryCalls++;
-      const previousEditor = createCompatibleDelegateEditor();
-      previousEditors.push(previousEditor);
-      return previousEditor;
-    };
-    let editorFactory: PreviousEditorFactory | undefined = previousFactory;
-    const uiCallOrder: string[] = [];
-    const notifications: NotificationCall[] = [];
-    const ctx = {
-      cwd: process.cwd(),
-      hasUI: true,
-      ui: {
-        theme: stubTheme,
-        setEditorComponent(factory: EditorFactory): void {
-          uiCallOrder.push("setEditorComponent");
-          editorFactory = factory;
-        },
-        getEditorComponent(): PreviousEditorFactory | undefined {
-          uiCallOrder.push("getEditorComponent");
-          return editorFactory;
-        },
-        notify(message: string, type: string): void {
-          notifications.push({ message, type });
-        },
-      },
-      shutdown(): void {},
-    };
-
-    installPiVim(pi);
-    await pi.emit("session_start", undefined, ctx);
-    const firstPiVimFactory = editorFactory;
-    assert.ok(firstPiVimFactory);
-    assert.notEqual(firstPiVimFactory, previousFactory);
-
-    await pi.emit("session_start", undefined, ctx);
-    const secondPiVimFactory = editorFactory;
-    assert.ok(secondPiVimFactory);
-    assert.notEqual(secondPiVimFactory, firstPiVimFactory);
-
-    const editor = secondPiVimFactory(stubTui, stubTheme, stubKeybindings);
-    const insertDelegate = (editor as unknown as { insertDelegate: unknown }).insertDelegate;
-
-    assert.equal(editor instanceof ModalEditor, true);
-    assert.equal(insertDelegate, previousEditors[0]);
-    assert.equal(insertDelegate instanceof ModalEditor, false);
-    assert.equal(previousFactoryCalls, 1);
-    assert.deepEqual(notifications, []);
-    assert.deepEqual(uiCallOrder, [
-      "getEditorComponent",
-      "setEditorComponent",
-      "getEditorComponent",
-      "setEditorComponent",
-    ]);
-  });
 
   it("warns and falls back when the previous factory throws", async () => {
     const extension = await installExtensionWithEditorFactory(() => {
