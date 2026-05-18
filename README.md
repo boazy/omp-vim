@@ -309,6 +309,8 @@ Paste text ending in `\n` is treated as line-wise.
 
 pi-vim intentionally uses Pi extension load order. Install pi-vim after another editor extension when Vim modal behavior should win. If that preceding editor is compatible, pi-vim preserves it as the INSERT-mode delegate and backing primitive editor.
 
+Delegation requires a Pi runtime that exposes `ctx.ui.getEditorComponent()`. Older runtimes without that API still get standalone pi-vim behavior, but pi-vim cannot preserve a previous editor there.
+
 pi-vim owns NORMAL mode, EX mode, escape handling, operators, motions, registers, and the mode label. The preceding editor receives ordinary INSERT-mode input only when it exposes the required `CustomEditor` / TUI `Editor`-compatible surface and internals that pi-vim needs for text, cursor, rendering, and primitive edits.
 
 If the preceding editor is incompatible or its factory fails, pi-vim replaces it with standalone pi-vim behavior and shows a warning for that mounted editor. [`@jordyvd/pi-image-attachments`](https://www.npmjs.com/package/@jordyvd/pi-image-attachments) is compatible when its editor is built on or preserves `CustomEditor` behavior.

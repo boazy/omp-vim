@@ -742,6 +742,15 @@ describe("mode transitions", () => {
     assert.equal(editor.getMode(), "insert");
   });
 
+  it("insert mode keeps unwrapped text chunks that look like key release", () => {
+    const { editor } = createEditorWithSpy("abc");
+
+    sendKeys(editor, ["i", "90:62:3F:A5"]);
+
+    assert.equal(editor.getText(), "90:62:3F:A5abc");
+    assert.equal(editor.getMode(), "insert");
+  });
+
   it("escape from insert clears unterminated bracketed paste state", () => {
     const { editor } = createEditorWithSpy("abc");
 
@@ -1487,6 +1496,35 @@ describe("ModalEditor delegate-backed primitives", () => {
     assert.equal(editor.getMode(), "insert");
     assert.equal(editor.getText(), "abc\n");
     assert.deepEqual(editor.getCursor(), { line: 1, col: 0 });
+  });
+
+  it("syncs delegate setText wrappers after NORMAL text mutations", () => {
+    class DraftTrackingDelegate extends CompatibleDelegateEditor {
+      draftPlaceholders = ["[Image #1]"];
+      publishedDrafts: string[][] = [];
+
+      override setText(text: string): void {
+        super.setText(text);
+        this.syncDraft();
+      }
+
+      private syncDraft(): void {
+        const text = this.getText();
+        this.draftPlaceholders = this.draftPlaceholders.filter((placeholder) => text.includes(placeholder));
+        this.publishedDrafts.push([...this.draftPlaceholders]);
+      }
+    }
+
+    const editor = new ModalEditor(stubTui, stubTheme, stubKeybindings);
+    const delegate = new DraftTrackingDelegate(stubTui, stubTheme, stubKeybindings);
+    delegate.setText("[Image #1] prompt");
+    setInsertDelegateForTest(editor, delegate);
+
+    sendKeys(editor, ["\x1b", "d", "d"]);
+
+    assert.equal(editor.getText(), "");
+    assert.deepEqual(delegate.draftPlaceholders, []);
+    assert.deepEqual(delegate.publishedDrafts.at(-1), []);
   });
 
   it("uses delegate undo and pi-vim redo for delegate-backed edits", () => {

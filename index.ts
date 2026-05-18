@@ -79,6 +79,10 @@ const CLIPBOARD_SPAWN_FAILURE_LIMIT = 3;
 const CLIPBOARD_READ_TIMEOUT_MS = 750;
 const CLIPBOARD_READ_MAX_BUFFER_BYTES = 1024 * 1024;
 
+function isKeyReleaseEvent(data: string): boolean {
+  return data.startsWith("\x1b[") && isKeyRelease(data);
+}
+
 type EditorSnapshot = {
   text: string;
   cursor: { line: number; col: number };
@@ -800,6 +804,33 @@ export function createModalEditor<TBase extends CustomEditorConstructor>(Base: T
     return (this.insertDelegate ?? this) as unknown as ModalEditorInternals;
   }
 
+  private syncDelegateTextAfterDirectMutation(
+    editor: ModalEditorInternals,
+    text: string,
+    cursor: { line: number; col: number },
+  ): boolean {
+    const delegate = this.insertDelegate;
+    if (!delegate || (editor as unknown) !== delegate) return false;
+
+    this.syncInsertDelegate();
+    delegate.setText(text);
+
+    const state = editor.state;
+    if (!state || !Array.isArray(state.lines)) return true;
+
+    editor.historyIndex = -1;
+    editor.lastAction = null;
+    state.cursorLine = cursor.line;
+    if (typeof editor.setCursorCol === "function") {
+      editor.setCursorCol(cursor.col);
+    } else {
+      state.cursorCol = cursor.col;
+      editor.preferredVisualCol = null;
+    }
+
+    return true;
+  }
+
   private restoreSnapshot(snapshot: EditorSnapshot): void {
     const editor = this.primitiveEditor();
     const state = this.requireRedoRestoreState(editor);
@@ -824,7 +855,12 @@ export function createModalEditor<TBase extends CustomEditorConstructor>(Base: T
 
     editor.historyIndex = -1;
     editor.lastAction = null;
-    editor.onChange?.(this.getText());
+    const synced = this.syncDelegateTextAfterDirectMutation(
+      editor,
+      snapshot.text,
+      { line: cursorLine, col: cursorCol },
+    );
+    if (!synced) editor.onChange?.(this.getText());
     editor.tui?.requestRender?.();
   }
 
@@ -954,7 +990,13 @@ export function createModalEditor<TBase extends CustomEditorConstructor>(Base: T
     editor.state.cursorCol = postCursorCol;
     editor.preferredVisualCol = postPreferredCol;
 
-    editor.onChange?.(this.getText());
+    const postText = this.getText();
+    const synced = this.syncDelegateTextAfterDirectMutation(
+      editor,
+      postText,
+      { line: postCursorLine ?? 0, col: postCursorCol ?? 0 },
+    );
+    if (!synced) editor.onChange?.(postText);
     editor.tui?.requestRender?.();
   }
 
@@ -1092,6 +1134,9 @@ export function createModalEditor<TBase extends CustomEditorConstructor>(Base: T
       if (data.includes(BRACKETED_PASTE_END)) {
         this.forwardingBracketedPasteInInsertMode = false;
       }
+      // TODO(TODO-23f57080): this only bypasses release filtering. A split
+      // paste terminator (`"\x1b"` then `"[201~"`) can still be handled as
+      // Escape below and leave INSERT mode; tracked separately.
       return true;
     }
 
@@ -1154,7 +1199,11 @@ export function createModalEditor<TBase extends CustomEditorConstructor>(Base: T
     const allowInsertPastePayload = this.shouldBypassReleaseFilterForInsertPaste(data);
     const delegateWantsInsertKeyRelease = this.mode === "insert"
       && this.insertDelegate?.wantsKeyRelease === true;
-    if(!allowReleaseLikePastePayload&&!allowInsertPastePayload&&!delegateWantsInsertKeyRelease&&isKeyRelease(data))return;
+    if (!allowReleaseLikePastePayload
+      && !allowInsertPastePayload
+      && !delegateWantsInsertKeyRelease
+      && isKeyReleaseEvent(data)
+    ) return;
 
     if (this.isEscapeLikeInput(data)) {
       this.handleEscape();
@@ -1244,6 +1293,9 @@ export function createModalEditor<TBase extends CustomEditorConstructor>(Base: T
   private handleInsertInput(data: string): void { this.applyEditorPrimitive(data); }
 
   private applyEditorPrimitive(data: string): void {
+    // Raw NORMAL/EX input stays in pi-vim. The editor primitives produced by
+    // those commands still target the delegate when present so delegate-owned
+    // undo stacks and sidecar state stay coherent; see pi-vim.spec ADR 0009.
     this.syncInsertDelegate();
     const editor = this.insertDelegate;
     if (editor) editor.handleInput(data); else super.handleInput(data);
@@ -3021,7 +3073,8 @@ export function createModalEditor<TBase extends CustomEditorConstructor>(Base: T
     state.cursorLine = line;
     state.cursorCol = col;
     editor.preferredVisualCol = null;
-    editor.onChange?.(text);
+    const synced = this.syncDelegateTextAfterDirectMutation(editor, text, { line, col });
+    if (!synced) editor.onChange?.(text);
     if (editor.autocompleteState) editor.updateAutocomplete?.();
     editor.tui?.requestRender?.();
   }
