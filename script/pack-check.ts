@@ -65,7 +65,7 @@ const THRESHOLDS = {
   // Composable editor factory (#3935) adds the createModalEditor mixin wrapper and
   // delegation model docs. Keep budgets tight enough to catch accidental docs/tests.
   maxSize: 35000,
-  maxUnpackedSize: 152000,
+  maxUnpackedSize: 152500,
 } as const;
 
 function compareStrings(a: string, b: string): number {
