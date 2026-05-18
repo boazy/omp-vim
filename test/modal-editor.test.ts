@@ -17,7 +17,7 @@ import type { WordMotionDirection, WordMotionTarget } from "../word-boundary-cac
 import installPiVim, { ModalEditor } from "../index.js";
 import { setPiVimSettingsReaderForTests } from "../clipboard-policy.js";
 import {
-  type CompatibleDelegateEditor,
+  CompatibleDelegateEditor,
   type DelegateSyncSnapshot,
   createCompatibleDelegateEditor,
   createCursorShapeTui,
@@ -1570,19 +1570,26 @@ describe("ModalEditor stock editor delegate surface", () => {
     assert.deepEqual(changedTexts, ["z"]);
   });
 
-  it("preserves delegate shortcut fields and merges action handlers", () => {
+  it("chains delegate shortcut fields and merges action handlers", () => {
     const editor = new ModalEditor(stubTui, stubTheme, stubKeybindings);
     const delegate = createStockSurfaceDelegateEditor();
-    const delegateShortcutInputs: string[] = [];
-    const delegateOnEscape = () => {};
-    const delegateOnCtrlD = () => {};
-    const delegateOnPasteImage = () => {};
+    const shortcutCalls: string[] = [];
+    const delegateOnEscape = () => shortcutCalls.push("delegate escape");
+    const delegateOnCtrlD = () => shortcutCalls.push("delegate ctrl-d");
+    const delegateOnPasteImage = () => shortcutCalls.push("delegate paste-image");
     const delegateOnExtensionShortcut = (data: string) => {
-      delegateShortcutInputs.push(data);
-      return false;
+      shortcutCalls.push(`delegate shortcut:${data}`);
+      return data === "delegate-handled";
     };
     const delegateActionHandler = () => {};
     const editorActionHandler = () => {};
+    const editorOnEscape = () => shortcutCalls.push("editor escape");
+    const editorOnCtrlD = () => shortcutCalls.push("editor ctrl-d");
+    const editorOnPasteImage = () => shortcutCalls.push("editor paste-image");
+    const editorOnExtensionShortcut = (data: string) => {
+      shortcutCalls.push(`editor shortcut:${data}`);
+      return data === "editor-handled";
+    };
 
     delegate.onEscape = delegateOnEscape;
     delegate.onCtrlD = delegateOnCtrlD;
@@ -1592,10 +1599,10 @@ describe("ModalEditor stock editor delegate surface", () => {
       "app.exit" as Parameters<typeof delegate.actionHandlers.set>[0],
       delegateActionHandler,
     );
-    editor.onEscape = () => {};
-    editor.onCtrlD = () => {};
-    editor.onPasteImage = () => {};
-    editor.onExtensionShortcut = () => false;
+    editor.onEscape = editorOnEscape;
+    editor.onCtrlD = editorOnCtrlD;
+    editor.onPasteImage = editorOnPasteImage;
+    editor.onExtensionShortcut = editorOnExtensionShortcut;
     editor.actionHandlers.set(
       "app.interrupt" as Parameters<typeof editor.actionHandlers.set>[0],
       editorActionHandler,
@@ -1606,11 +1613,36 @@ describe("ModalEditor stock editor delegate surface", () => {
 
     const snapshot: DelegateSyncSnapshot | undefined = delegate.inputSyncSnapshots[0];
     assert.ok(snapshot, "expected delegate to record sync state before input");
-    assert.equal(snapshot.onEscape, delegateOnEscape);
-    assert.equal(snapshot.onCtrlD, delegateOnCtrlD);
-    assert.equal(snapshot.onPasteImage, delegateOnPasteImage);
-    assert.equal(snapshot.onExtensionShortcut, delegateOnExtensionShortcut);
-    assert.deepEqual(delegateShortcutInputs, ["z"]);
+    assert.notEqual(snapshot.onEscape, delegateOnEscape);
+    assert.notEqual(snapshot.onEscape, editorOnEscape);
+    assert.notEqual(snapshot.onCtrlD, delegateOnCtrlD);
+    assert.notEqual(snapshot.onCtrlD, editorOnCtrlD);
+    assert.notEqual(snapshot.onPasteImage, delegateOnPasteImage);
+    assert.notEqual(snapshot.onPasteImage, editorOnPasteImage);
+    assert.notEqual(snapshot.onExtensionShortcut, delegateOnExtensionShortcut);
+    assert.notEqual(snapshot.onExtensionShortcut, editorOnExtensionShortcut);
+    assert.deepEqual(shortcutCalls, ["editor shortcut:z", "delegate shortcut:z"]);
+
+    shortcutCalls.length = 0;
+    (snapshot.onEscape as () => void)();
+    (snapshot.onCtrlD as () => void)();
+    (snapshot.onPasteImage as () => void)();
+    assert.equal((snapshot.onExtensionShortcut as (data: string) => boolean)("editor-handled"), true);
+    assert.equal((snapshot.onExtensionShortcut as (data: string) => boolean)("delegate-handled"), true);
+    assert.equal((snapshot.onExtensionShortcut as (data: string) => boolean)("not-handled"), false);
+    assert.deepEqual(shortcutCalls, [
+      "editor escape",
+      "delegate escape",
+      "editor ctrl-d",
+      "delegate ctrl-d",
+      "editor paste-image",
+      "delegate paste-image",
+      "editor shortcut:editor-handled",
+      "editor shortcut:delegate-handled",
+      "delegate shortcut:delegate-handled",
+      "editor shortcut:not-handled",
+      "delegate shortcut:not-handled",
+    ]);
     assert.equal(snapshot.actionHandlers instanceof Map, true);
     assert.notEqual(snapshot.actionHandlers, editor.actionHandlers);
     assert.equal(
@@ -1621,6 +1653,28 @@ describe("ModalEditor stock editor delegate surface", () => {
       (snapshot.actionHandlers as Map<unknown, unknown>).get("app.interrupt"),
       editorActionHandler,
     );
+  });
+
+  it("routes NORMAL escape through the outer interrupt when the delegate has onEscape", () => {
+    const interruptKeybindings = {
+      matches(data: string, action: string): boolean {
+        return data === "\x1b" && action === "app.interrupt";
+      },
+    } as unknown as ConstructorParameters<typeof ModalEditor>[2];
+    const editor = new ModalEditor(stubTui, stubTheme, interruptKeybindings);
+    const delegate = new CompatibleDelegateEditor(stubTui, stubTheme, interruptKeybindings);
+    const calls: string[] = [];
+
+    delegate.onEscape = () => calls.push("delegate");
+    editor.onEscape = () => calls.push("outer");
+    setInsertDelegateForTest(editor, delegate);
+
+    editor.handleInput("\x1b");
+    assert.equal(editor.getMode(), "normal");
+    assert.deepEqual(calls, []);
+
+    editor.handleInput("\x1b");
+    assert.deepEqual(calls, ["outer", "delegate"]);
   });
 });
 
@@ -1693,6 +1747,66 @@ describe("insert delegate factory integration", () => {
     assert.equal(previousFactoryCalls, 2);
     assert.equal(previousEditors.length, 2);
     assert.equal(extension.notificationCalls, 0);
+  });
+
+  it("reuses the original factory instead of wrapping its own later session factory", async () => {
+    const pi = createExtensionApiHarness();
+    let previousFactoryCalls = 0;
+    const previousEditors: CompatibleDelegateEditor[] = [];
+    const previousFactory: PreviousEditorFactory = () => {
+      previousFactoryCalls++;
+      const previousEditor = createCompatibleDelegateEditor();
+      previousEditors.push(previousEditor);
+      return previousEditor;
+    };
+    let editorFactory: PreviousEditorFactory | undefined = previousFactory;
+    const uiCallOrder: string[] = [];
+    const notifications: NotificationCall[] = [];
+    const ctx = {
+      cwd: process.cwd(),
+      hasUI: true,
+      ui: {
+        theme: stubTheme,
+        setEditorComponent(factory: EditorFactory): void {
+          uiCallOrder.push("setEditorComponent");
+          editorFactory = factory;
+        },
+        getEditorComponent(): PreviousEditorFactory | undefined {
+          uiCallOrder.push("getEditorComponent");
+          return editorFactory;
+        },
+        notify(message: string, type: string): void {
+          notifications.push({ message, type });
+        },
+      },
+      shutdown(): void {},
+    };
+
+    installPiVim(pi);
+    await pi.emit("session_start", undefined, ctx);
+    const firstPiVimFactory = editorFactory;
+    assert.ok(firstPiVimFactory);
+    assert.notEqual(firstPiVimFactory, previousFactory);
+
+    await pi.emit("session_start", undefined, ctx);
+    const secondPiVimFactory = editorFactory;
+    assert.ok(secondPiVimFactory);
+    assert.notEqual(secondPiVimFactory, firstPiVimFactory);
+
+    const editor = secondPiVimFactory(stubTui, stubTheme, stubKeybindings);
+    const insertDelegate = (editor as unknown as { insertDelegate: unknown }).insertDelegate;
+
+    assert.equal(editor instanceof ModalEditor, true);
+    assert.equal(insertDelegate, previousEditors[0]);
+    assert.equal(insertDelegate instanceof ModalEditor, false);
+    assert.equal(previousFactoryCalls, 1);
+    assert.deepEqual(notifications, []);
+    assert.deepEqual(uiCallOrder, [
+      "getEditorComponent",
+      "setEditorComponent",
+      "getEditorComponent",
+      "setEditorComponent",
+    ]);
   });
 
   it("warns and falls back when the previous factory throws", async () => {

@@ -112,10 +112,42 @@ type CustomEditorHandlerSurface = Partial<
   >
 >;
 
-type OwnedDelegateHandlers = Pick<
-  CustomEditorHandlerSurface,
-  "onEscape" | "onCtrlD" | "onPasteImage" | "onExtensionShortcut"
->;
+type DSH = Pick<CustomEditorHandlerSurface, "onEscape" | "onCtrlD" | "onPasteImage" | "onExtensionShortcut">;
+type ODH = DSH & { delegate?: DSH };
+type VDK = "onEscape" | "onCtrlD" | "onPasteImage";
+
+const PVF = Symbol.for("pi-vim");
+
+function chainVoid(o: (() => void) | undefined, d: (() => void) | undefined): (() => void) | undefined { return o && d !== o ? d ? () => { o(); d(); } : o : d; }
+
+function chainExt(o: ((data: string) => boolean) | undefined, d: ((data: string) => boolean) | undefined): ((data: string) => boolean) | undefined { return o && d !== o ? d ? (data: string) => o(data) || d(data) : o : d; }
+
+function syncVoid(
+  s: CustomEditorHandlerSurface,
+  o: ODH,
+  k: VDK,
+  h: (() => void) | undefined,
+): void {
+  const d = o.delegate ?? {};
+  const p = s[k] === o[k] ? d[k] : s[k];
+  s[k] = chainVoid(h, p);
+  o[k] = s[k];
+  d[k] = p;
+  o.delegate = d;
+}
+
+function syncExt(
+  s: CustomEditorHandlerSurface,
+  o: ODH,
+  h: ((data: string) => boolean) | undefined,
+): void {
+  const d = o.delegate ?? {};
+  const p = s.onExtensionShortcut === o.onExtensionShortcut ? d.onExtensionShortcut : s.onExtensionShortcut;
+  s.onExtensionShortcut = chainExt(h, p);
+  o.onExtensionShortcut = s.onExtensionShortcut;
+  d.onExtensionShortcut = p;
+  o.delegate = d;
+}
 
 export type CompatibilityResult = { compatible: true; editor: CustomEditorCompatible } | { compatible: false; reason: string };
 
@@ -613,7 +645,7 @@ export function createModalEditor<TBase extends CustomEditorConstructor>(Base: T
   private readonly cursorShapeRuntime: CursorShapeRuntime | null;
   private lastCursorShapeSequence: CursorShapeSequence | null = null;
   private insertDelegate: CustomEditorCompatible | null = null;
-  private readonly ownedDelegateHandlers = new WeakMap<object, OwnedDelegateHandlers>();
+  private readonly ownedDelegateHandlers = new WeakMap<object, ODH>();
 
   private unnamedRegister = "";
   private clipboardMirrorPolicy = DEFAULT_CLIPBOARD_MIRROR_POLICY;
@@ -1160,25 +1192,20 @@ export function createModalEditor<TBase extends CustomEditorConstructor>(Base: T
     const handlerSurface = editor as CustomEditorHandlerSurface;
     const ownedHandlers = this.ownedDelegateHandlers.get(editor) ?? {};
 
-    if (!handlerSurface.onEscape || handlerSurface.onEscape === ownedHandlers.onEscape) {
-      handlerSurface.onEscape = this.onEscape;
-      ownedHandlers.onEscape = this.onEscape;
-    }
-    if (!handlerSurface.onCtrlD || handlerSurface.onCtrlD === ownedHandlers.onCtrlD) {
-      handlerSurface.onCtrlD = this.onCtrlD;
-      ownedHandlers.onCtrlD = this.onCtrlD;
-    }
-    if (!handlerSurface.onPasteImage || handlerSurface.onPasteImage === ownedHandlers.onPasteImage) {
-      handlerSurface.onPasteImage = this.onPasteImage;
-      ownedHandlers.onPasteImage = this.onPasteImage;
-    }
-    if (
-      !handlerSurface.onExtensionShortcut
-      || handlerSurface.onExtensionShortcut === ownedHandlers.onExtensionShortcut
-    ) {
-      handlerSurface.onExtensionShortcut = this.onExtensionShortcut;
-      ownedHandlers.onExtensionShortcut = this.onExtensionShortcut;
-    }
+    syncVoid(
+      handlerSurface,
+      ownedHandlers,
+      "onEscape",
+      this.onEscape ?? this.actionHandlers.get("app.interrupt"),
+    );
+    syncVoid(
+      handlerSurface,
+      ownedHandlers,
+      "onCtrlD",
+      this.onCtrlD ?? this.actionHandlers.get("app.exit"),
+    );
+    syncVoid(handlerSurface, ownedHandlers, "onPasteImage", this.onPasteImage);
+    syncExt(handlerSurface, ownedHandlers, this.onExtensionShortcut);
     this.ownedDelegateHandlers.set(editor, ownedHandlers);
 
     if (handlerSurface.actionHandlers instanceof Map) {
@@ -3213,9 +3240,10 @@ export default function (pi: ExtensionAPI) {
       normal: (s: string) => t.fg("borderAccent", reverseVideo(s)),
       ex: (s: string) => t.fg("warning", reverseVideo(s)),
     } : null;
-    const previousFactory = ctx.ui.getEditorComponent?.();
+    const f = ctx.ui.getEditorComponent?.();
+    const prev=typeof f==="function"&&PVF in f?(f as typeof f&{[PVF]?:typeof f})[PVF]:f;
 
-    ctx.ui.setEditorComponent((tui, theme, kb) => {
+    const vf: NonNullable<typeof prev> = (tui, theme, kb) => {
       cursorShapeCleanup = enableCursorShapeSupport(tui);
 
       const editor = new ModalEditor(tui, theme, kb);
@@ -3224,9 +3252,9 @@ export default function (pi: ExtensionAPI) {
       editor.setQuitFn(() => ctx.shutdown());
       editor.setNotifyFn((message) => ctx.ui.notify(message, "warning"));
 
-      if (previousFactory) {
+      if (prev) {
         try {
-          const previousEditor = previousFactory(tui, theme, kb);
+          const previousEditor = prev(tui, theme, kb);
           const compatibility = getCompatibility(previousEditor);
           if (compatibility.compatible) {
             editor.setInsertDelegate(compatibility.editor);
@@ -3245,7 +3273,8 @@ export default function (pi: ExtensionAPI) {
       }
 
       return editor;
-    });
+    };
+    ctx.ui.setEditorComponent(Object.assign(vf as object,{[PVF]:prev}) as typeof vf);
   });
 
   pi.on("session_shutdown", () => {
