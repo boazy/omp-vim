@@ -64,9 +64,10 @@ const THRESHOLDS = {
   // WORD/delimited text objects add a packaged resolver module plus README surface.
   // Composable editor factory (#3935) adds the createModalEditor mixin wrapper,
   // delegation model docs, and EX paste provenance for pasted CSI bytes.
-  // Keep budgets tight enough to catch accidental docs/tests.
-  maxSize: 35200,
-  maxUnpackedSize: 153600,
+  // Review hardening keeps non-obvious WHY comments and expands delegation
+  // helpers for maintainability. Keep budgets tight enough to catch accidents.
+  maxSize: 35600,
+  maxUnpackedSize: 157000,
 } as const;
 
 function compareStrings(a: string, b: string): number {

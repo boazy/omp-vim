@@ -10,11 +10,11 @@ import { spawn } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import type { CustomEditor } from "@mariozechner/pi-coding-agent";
+import { CustomEditor } from "@mariozechner/pi-coding-agent";
 import { CURSOR_MARKER, visibleWidth } from "@mariozechner/pi-tui";
 import type { WordMotionClass } from "../motions.js";
 import type { WordMotionDirection, WordMotionTarget } from "../word-boundary-cache.js";
-import installPiVim, { ModalEditor } from "../index.js";
+import installPiVim, { createModalEditor, ModalEditor } from "../index.js";
 import { setPiVimSettingsReaderForTests } from "../clipboard-policy.js";
 import {
   CompatibleDelegateEditor,
@@ -363,6 +363,108 @@ function createTransparentEditorWrapper(
       return property in source;
     },
   }) as unknown as ModalEditor;
+}
+
+type ImageAttachmentWidgetCall = {
+  content: string[];
+};
+
+const IMAGE_ATTACHMENT_CONTRACT_PATH = "/tmp/pi-vim-contract-fixture.png";
+const BRACKETED_PASTE_START = "\x1b[200~";
+const BRACKETED_PASTE_END = "\x1b[201~";
+
+function bracketedPaste(text: string): string {
+  return `${BRACKETED_PASTE_START}${text}${BRACKETED_PASTE_END}`;
+}
+
+function extractBracketedPastePayload(data: string): string | null {
+  if (!data.startsWith(BRACKETED_PASTE_START)) return null;
+  if (!data.endsWith(BRACKETED_PASTE_END)) return null;
+
+  return data.slice(
+    BRACKETED_PASTE_START.length,
+    data.length - BRACKETED_PASTE_END.length,
+  );
+}
+
+function isContractImagePath(text: string): boolean {
+  return text === IMAGE_ATTACHMENT_CONTRACT_PATH;
+}
+
+function recordImageAttachment(
+  widgetCalls: ImageAttachmentWidgetCall[],
+  imageIndex: number,
+): string {
+  const placeholder = `[Image #${imageIndex}] `;
+  widgetCalls.push({ content: [placeholder.trim()] });
+  return placeholder;
+}
+
+class ImageAttachmentsStyleDelegateEditor extends CompatibleDelegateEditor {
+  readonly widgetCalls: ImageAttachmentWidgetCall[] = [];
+  private nextImageIndex = 1;
+
+  override handleInput(data: string): void {
+    const pastedText = extractBracketedPastePayload(data);
+    if (pastedText !== null && isContractImagePath(pastedText)) {
+      this.insertTextAtCursor(pastedText);
+      return;
+    }
+
+    super.handleInput(data);
+  }
+
+  override insertTextAtCursor(text: string): void {
+    if (isContractImagePath(text)) {
+      const placeholder = recordImageAttachment(this.widgetCalls, this.nextImageIndex);
+      this.nextImageIndex++;
+      super.insertTextAtCursor(placeholder);
+      return;
+    }
+
+    super.insertTextAtCursor(text);
+  }
+}
+
+function createImageAttachmentsStyleDelegate(): ImageAttachmentsStyleDelegateEditor {
+  return new ImageAttachmentsStyleDelegateEditor(stubTui, stubTheme, stubKeybindings);
+}
+
+function decorateImageAttachmentsStyleEditor(editor: ModalEditor): {
+  editor: ModalEditor;
+  widgetCalls: ImageAttachmentWidgetCall[];
+} {
+  const widgetCalls: ImageAttachmentWidgetCall[] = [];
+  const originalHandleInput = editor.handleInput.bind(editor);
+  const originalInsertTextAtCursor = editor.insertTextAtCursor.bind(editor);
+  let nextImageIndex = 1;
+
+  const insertImagePlaceholder = (): void => {
+    const placeholder = recordImageAttachment(widgetCalls, nextImageIndex);
+    nextImageIndex++;
+    originalInsertTextAtCursor(placeholder);
+  };
+
+  editor.handleInput = (data: string): void => {
+    const pastedText = extractBracketedPastePayload(data);
+    if (pastedText !== null && isContractImagePath(pastedText)) {
+      insertImagePlaceholder();
+      return;
+    }
+
+    originalHandleInput(data);
+  };
+
+  editor.insertTextAtCursor = (text: string): void => {
+    if (isContractImagePath(text)) {
+      insertImagePlaceholder();
+      return;
+    }
+
+    originalInsertTextAtCursor(text);
+  };
+
+  return { editor, widgetCalls };
 }
 
 const CLIPBOARD_HELPER_TEST_TIMEOUT_MS = 5_000;
@@ -865,6 +967,26 @@ describe("ex mini-mode", () => {
       autocompleteMaxVisible: 7,
     });
 
+    assert.equal(editor.getPaddingX(), 3);
+    assert.equal(editor.getAutocompleteMaxVisible(), 7);
+  });
+
+  it("does not classify base editor options as legacy colorizers", () => {
+    const receivedFourthArgs: unknown[] = [];
+
+    class RecordingCustomEditor extends CustomEditor {
+      constructor(...args: ConstructorParameters<typeof CustomEditor>) {
+        receivedFourthArgs.push(args[3]);
+        super(...args);
+      }
+    }
+
+    const RecordingModalEditor = createModalEditor(RecordingCustomEditor);
+    const options = { paddingX: 3, autocompleteMaxVisible: 7 };
+
+    const editor = new RecordingModalEditor(stubTui, stubTheme, stubKeybindings, options);
+
+    assert.deepEqual(receivedFourthArgs, [options]);
     assert.equal(editor.getPaddingX(), 3);
     assert.equal(editor.getAutocompleteMaxVisible(), 7);
   });
@@ -2115,6 +2237,58 @@ describe("insert delegate factory integration", () => {
     assert.match(extension.notifications[1]?.message ?? "", /incompatible previous editor/i);
   });
 
+});
+
+describe("image attachments compatibility contract", () => {
+  it("preserves image-attachments style behavior when the image editor loads first", async () => {
+    const bracketedDelegate = createImageAttachmentsStyleDelegate();
+    const bracketedExtension = await installExtensionWithEditorFactory(() => bracketedDelegate);
+    const bracketedEditor = bracketedExtension.editorFactory(stubTui, stubTheme, stubKeybindings);
+
+    bracketedEditor.handleInput(bracketedPaste(IMAGE_ATTACHMENT_CONTRACT_PATH));
+
+    assert.equal(bracketedEditor.getText(), "[Image #1] ");
+    assert.deepEqual(bracketedDelegate.widgetCalls, [{ content: ["[Image #1]"] }]);
+    assert.equal(bracketedEditor.getMode(), "insert");
+
+    const directDelegate = createImageAttachmentsStyleDelegate();
+    const directExtension = await installExtensionWithEditorFactory(() => directDelegate);
+    const directEditor = directExtension.editorFactory(stubTui, stubTheme, stubKeybindings);
+
+    directEditor.insertTextAtCursor(IMAGE_ATTACHMENT_CONTRACT_PATH);
+
+    assert.equal(directEditor.getText(), "[Image #1] ");
+    assert.deepEqual(directDelegate.widgetCalls, [{ content: ["[Image #1]"] }]);
+    assert.equal(directEditor.getMode(), "insert");
+  });
+
+  it("supports image-attachments style decoration when pi-vim loads first", async () => {
+    const bracketedExtension = await installExtensionWithEditorFactory();
+    const bracketed = decorateImageAttachmentsStyleEditor(
+      bracketedExtension.editorFactory(stubTui, stubTheme, stubKeybindings),
+    );
+
+    assertWrappableBaselineSurface(bracketed.editor);
+
+    bracketed.editor.handleInput(bracketedPaste(IMAGE_ATTACHMENT_CONTRACT_PATH));
+
+    assert.equal(bracketed.editor.getText(), "[Image #1] ");
+    assert.deepEqual(bracketed.widgetCalls, [{ content: ["[Image #1]"] }]);
+    assert.equal(bracketed.editor.getMode(), "insert");
+
+    const directExtension = await installExtensionWithEditorFactory();
+    const direct = decorateImageAttachmentsStyleEditor(
+      directExtension.editorFactory(stubTui, stubTheme, stubKeybindings),
+    );
+
+    assertWrappableBaselineSurface(direct.editor);
+
+    direct.editor.insertTextAtCursor(IMAGE_ATTACHMENT_CONTRACT_PATH);
+
+    assert.equal(direct.editor.getText(), "[Image #1] ");
+    assert.deepEqual(direct.widgetCalls, [{ content: ["[Image #1]"] }]);
+    assert.equal(direct.editor.getMode(), "insert");
+  });
 });
 
 describe("pi-vim wrappability", () => {

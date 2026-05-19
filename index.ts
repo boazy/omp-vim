@@ -74,6 +74,8 @@ const SOFTWARE_CURSOR_RESETS = ["\x1b[0m", "\x1b[27m"] as const;
 const INSERT_CURSOR_SHAPE = "\x1b[5 q";
 const BLOCK_CURSOR_SHAPE = "\x1b[1 q";
 const RESET_CURSOR_SHAPE = "\x1b[0 q";
+// Pi emits OSC52 before its native clipboard fallback. Give that 5s fallback
+// a small grace so the parent does not kill the helper and discard stdout.
 const CLIPBOARD_WRITE_TIMEOUT_MS = PI_NATIVE_CLIPBOARD_TIMEOUT_MS + 500;
 const CLIPBOARD_SPAWN_FAILURE_LIMIT = 3;
 const CLIPBOARD_READ_TIMEOUT_MS = 750;
@@ -140,61 +142,108 @@ type ActionHandlerMap = NonNullable<CustomEditorHandlerSurface["actionHandlers"]
 type ActionHandlerKey = Parameters<ActionHandlerMap["set"]>[0];
 type ActionHandler = Parameters<ActionHandlerMap["set"]>[1];
 type ExSegment = { text: string; pasted: boolean };
-type DSH = Pick<CustomEditorHandlerSurface, "onSubmit" | "onChange" | "onEscape" | "onCtrlD" | "onPasteImage" | "onExtensionShortcut">;
-type ODH = DSH & { delegate?: DSH; actionHandlers?: Map<ActionHandlerKey, ActionHandler> };
-type TDK = "onSubmit" | "onChange";
-type VDK = "onEscape" | "onCtrlD" | "onPasteImage";
+type DelegateHandlerFields = Pick<
+  CustomEditorHandlerSurface,
+  "onSubmit" | "onChange" | "onEscape" | "onCtrlD" | "onPasteImage" | "onExtensionShortcut"
+>;
+type OwnedDelegateHandlers = DelegateHandlerFields & {
+  delegate?: DelegateHandlerFields;
+  actionHandlers?: Map<ActionHandlerKey, ActionHandler>;
+};
+type TextDelegateHandlerKey = "onSubmit" | "onChange";
+type VoidDelegateHandlerKey = "onEscape" | "onCtrlD" | "onPasteImage";
 
-function chainVoid(o: (() => void) | undefined, d: (() => void) | undefined): (() => void) | undefined { return o && d !== o ? d ? () => { o(); d(); } : o : d; }
+function chainVoid(
+  outerHandler: (() => void) | undefined,
+  delegateHandler: (() => void) | undefined,
+): (() => void) | undefined {
+  if (!outerHandler || delegateHandler === outerHandler) return delegateHandler;
+  if (!delegateHandler) return outerHandler;
 
-function chainText(o: ((text: string) => void) | undefined, d: ((text: string) => void) | undefined): ((text: string) => void) | undefined { return o && d !== o ? d ? (text: string) => { o(text); d(text); } : o : d; }
+  return () => {
+    outerHandler();
+    delegateHandler();
+  };
+}
 
-function chainExt(o: ((data: string) => boolean) | undefined, d: ((data: string) => boolean) | undefined): ((data: string) => boolean) | undefined { return o && d !== o ? d ? (data: string) => o(data) || d(data) : o : d; }
+function chainText(
+  outerHandler: ((text: string) => void) | undefined,
+  delegateHandler: ((text: string) => void) | undefined,
+): ((text: string) => void) | undefined {
+  if (!outerHandler || delegateHandler === outerHandler) return delegateHandler;
+  if (!delegateHandler) return outerHandler;
 
+  return (text: string) => {
+    outerHandler(text);
+    delegateHandler(text);
+  };
+}
+
+function chainExt(
+  outerHandler: ((data: string) => boolean) | undefined,
+  delegateHandler: ((data: string) => boolean) | undefined,
+): ((data: string) => boolean) | undefined {
+  if (!outerHandler || delegateHandler === outerHandler) return delegateHandler;
+  if (!delegateHandler) return outerHandler;
+
+  return (data: string) => outerHandler(data) || delegateHandler(data);
+}
+
+// Track the wrappers pi-vim owns so repeated delegate syncs can recover the
+// delegate's current handler instead of wrapping an old wrapper again.
 function syncText(
-  s: CustomEditorHandlerSurface,
-  o: ODH,
-  k: TDK,
-  h: ((text: string) => void) | undefined,
+  handlerSurface: CustomEditorHandlerSurface,
+  ownedHandlers: OwnedDelegateHandlers,
+  handlerKey: TextDelegateHandlerKey,
+  outerHandler: ((text: string) => void) | undefined,
 ): void {
-  const d = o.delegate ?? {};
-  const p = s[k] === o[k] ? d[k] : s[k];
-  s[k] = chainText(h, p);
-  o[k] = s[k];
-  d[k] = p;
-  o.delegate = d;
+  const delegateHandlers = ownedHandlers.delegate ?? {};
+  const delegateHandler = handlerSurface[handlerKey] === ownedHandlers[handlerKey]
+    ? delegateHandlers[handlerKey]
+    : handlerSurface[handlerKey];
+
+  handlerSurface[handlerKey] = chainText(outerHandler, delegateHandler);
+  ownedHandlers[handlerKey] = handlerSurface[handlerKey];
+  delegateHandlers[handlerKey] = delegateHandler;
+  ownedHandlers.delegate = delegateHandlers;
 }
 
 function syncVoid(
-  s: CustomEditorHandlerSurface,
-  o: ODH,
-  k: VDK,
-  h: (() => void) | undefined,
+  handlerSurface: CustomEditorHandlerSurface,
+  ownedHandlers: OwnedDelegateHandlers,
+  handlerKey: VoidDelegateHandlerKey,
+  outerHandler: (() => void) | undefined,
 ): void {
-  const d = o.delegate ?? {};
-  const p = s[k] === o[k] ? d[k] : s[k];
-  s[k] = chainVoid(h, p);
-  o[k] = s[k];
-  d[k] = p;
-  o.delegate = d;
+  const delegateHandlers = ownedHandlers.delegate ?? {};
+  const delegateHandler = handlerSurface[handlerKey] === ownedHandlers[handlerKey]
+    ? delegateHandlers[handlerKey]
+    : handlerSurface[handlerKey];
+
+  handlerSurface[handlerKey] = chainVoid(outerHandler, delegateHandler);
+  ownedHandlers[handlerKey] = handlerSurface[handlerKey];
+  delegateHandlers[handlerKey] = delegateHandler;
+  ownedHandlers.delegate = delegateHandlers;
 }
 
 function syncExt(
-  s: CustomEditorHandlerSurface,
-  o: ODH,
-  h: ((data: string) => boolean) | undefined,
+  handlerSurface: CustomEditorHandlerSurface,
+  ownedHandlers: OwnedDelegateHandlers,
+  outerHandler: ((data: string) => boolean) | undefined,
 ): void {
-  const d = o.delegate ?? {};
-  const p = s.onExtensionShortcut === o.onExtensionShortcut ? d.onExtensionShortcut : s.onExtensionShortcut;
-  s.onExtensionShortcut = chainExt(h, p);
-  o.onExtensionShortcut = s.onExtensionShortcut;
-  d.onExtensionShortcut = p;
-  o.delegate = d;
+  const delegateHandlers = ownedHandlers.delegate ?? {};
+  const delegateHandler = handlerSurface.onExtensionShortcut === ownedHandlers.onExtensionShortcut
+    ? delegateHandlers.onExtensionShortcut
+    : handlerSurface.onExtensionShortcut;
+
+  handlerSurface.onExtensionShortcut = chainExt(outerHandler, delegateHandler);
+  ownedHandlers.onExtensionShortcut = handlerSurface.onExtensionShortcut;
+  delegateHandlers.onExtensionShortcut = delegateHandler;
+  ownedHandlers.delegate = delegateHandlers;
 }
 
 function syncActionHandlers(
   delegateHandlers: ActionHandlerMap,
-  ownedHandlers: ODH,
+  ownedHandlers: OwnedDelegateHandlers,
   sourceHandlers: ActionHandlerMap,
 ): void {
   const ownedActions = ownedHandlers.actionHandlers ?? new Map<ActionHandlerKey, ActionHandler>();
@@ -259,7 +308,17 @@ type ClipboardWriteFn = (text: string, signal: AbortSignal) => Promise<void>;
 type ClipboardReadFn = () => string | null;
 type ClipboardProcess = ReturnType<typeof spawn>;
 
-type ModeLabelColorizers=Record<"insert"|"normal"|"ex",(s:string)=>string>;
+type ModeLabelColorizer = (text: string) => string;
+type ModeLabelColorizers = Record<"insert" | "normal" | "ex", ModeLabelColorizer>;
+
+function isLegacyModeLabelColorizers(value: unknown): value is ModeLabelColorizers | null {
+  if (value === null) return true;
+  if (!isRecord(value)) return false;
+
+  return typeof value.insert === "function"
+    && typeof value.normal === "function"
+    && typeof value.ex === "function";
+}
 
 type CursorShapeSequence =
   | typeof INSERT_CURSOR_SHAPE
@@ -684,9 +743,22 @@ type CustomEditorConstructor = new (...args: any[]) => CustomEditor;
 
 export function createModalEditor<TBase extends CustomEditorConstructor>(Base: TBase) {
   return class ModalEditor extends Base {
-  private keyUp?: boolean;
-  get wantsKeyRelease(){const w=this.mode==="insert"?this.insertDelegate?.wantsKeyRelease:undefined;return this.keyUp||w===true?true:this.keyUp??(w===false?false:undefined);}
-  set wantsKeyRelease(v:boolean|undefined){this.keyUp=v;}
+  private decoratorWantsKeyRelease?: boolean;
+
+  get wantsKeyRelease(): boolean | undefined {
+    const delegateWantsKeyRelease = this.mode === "insert"
+      ? this.insertDelegate?.wantsKeyRelease
+      : undefined;
+
+    if (this.decoratorWantsKeyRelease === true || delegateWantsKeyRelease === true) return true;
+    if (this.decoratorWantsKeyRelease === false) return false;
+    return delegateWantsKeyRelease === false ? false : undefined;
+  }
+
+  set wantsKeyRelease(value: boolean | undefined) {
+    this.decoratorWantsKeyRelease = value;
+  }
+
   private mode: Mode = "insert";
   private pendingMotion: PendingMotion = null;
   private pendingTextObject: TextObjectKind | null = null;
@@ -711,7 +783,7 @@ export function createModalEditor<TBase extends CustomEditorConstructor>(Base: T
   private readonly cursorShapeRuntime: CursorShapeRuntime | null;
   private lastCursorShapeSequence: CursorShapeSequence | null = null;
   private insertDelegate: CustomEditorCompatible | null = null;
-  private readonly ownedDelegateHandlers = new WeakMap<object, ODH>();
+  private readonly ownedDelegateHandlers = new WeakMap<object, OwnedDelegateHandlers>();
 
   private unnamedRegister = "";
   private clipboardMirrorPolicy = DEFAULT_CLIPBOARD_MIRROR_POLICY;
@@ -722,11 +794,19 @@ export function createModalEditor<TBase extends CustomEditorConstructor>(Base: T
 
   // biome-ignore lint/suspicious/noExplicitAny: mixin.
   constructor(...args: any[]) {
-    const c=args[3];
-    const lc=c===null||(isRecord(c)&&["insert","normal","ex"].every((k)=>typeof c[k]==="function"))?args.splice(3,1)[0]:undefined;
+    // Legacy pi-vim accepted mode-label colorizers as the fourth constructor
+    // arg. Only strip that exact shape; CustomEditor options must reach Base.
+    const fourthArg = args[3];
+    const legacyColorizers = isLegacyModeLabelColorizers(fourthArg)
+      ? (args.splice(3, 1)[0] as ModeLabelColorizers | null)
+      : undefined;
+
     super(...args);
     this.cursorShapeRuntime = getCursorShapeRuntime(args[0]);
-    if (lc !== undefined) this.labelColorizers = lc;
+
+    if (legacyColorizers !== undefined) {
+      this.labelColorizers = legacyColorizers;
+    }
   }
 
   setColorizers(colorizers: ModeLabelColorizers | null) {
@@ -3378,11 +3458,17 @@ export function createModalEditor<TBase extends CustomEditorConstructor>(Base: T
   };
 }
 
-type A=ConstructorParameters<typeof CustomEditor>;
-const C=createModalEditor(CustomEditor);
-type M=InstanceType<typeof C>;
-export const ModalEditor=C as new(a:A[0],b:A[1],c:A[2],d?:A[3]|ModeLabelColorizers|null)=>M;
-export type ModalEditor=M;
+type CustomEditorConstructorArgs = ConstructorParameters<typeof CustomEditor>;
+const ModalEditorClass = createModalEditor(CustomEditor);
+type ModalEditorInstance = InstanceType<typeof ModalEditorClass>;
+
+export const ModalEditor = ModalEditorClass as new (
+  tui: CustomEditorConstructorArgs[0],
+  theme: CustomEditorConstructorArgs[1],
+  keybindings: CustomEditorConstructorArgs[2],
+  optionsOrColorizers?: CustomEditorConstructorArgs[3] | ModeLabelColorizers | null,
+) => ModalEditorInstance;
+export type ModalEditor = ModalEditorInstance;
 
 export default function (pi: ExtensionAPI) {
   let cursorShapeCleanup: CursorShapeCleanup | null = null;
