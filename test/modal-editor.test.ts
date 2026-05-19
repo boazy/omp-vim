@@ -1002,15 +1002,31 @@ describe("ex mini-mode", () => {
     assert.deepEqual(session.notifications, []);
   });
 
-  it("ex mini-mode keeps pasted CSI text that looks like key release", () => {
+  it("ex mini-mode renders escaped pasted CSI text that looks like key release", () => {
     const session = createEditorWithSpy("hello");
 
     sendKeys(session.editor, [":", "\x1b[200~\x1b[100;1:3u\x1b[201~"]);
 
-    assert.ok(session.editor.render(80).at(-1)?.endsWith(" EX :\x1b[100;1:3u_ "));
+    const footer = session.editor.render(80).at(-1) ?? "";
+    const label = footer.slice(footer.lastIndexOf(" EX "));
+    assert.equal(label.includes("\x1b"), false);
+    assert.equal(footer.includes("\x1b[100;1:3u"), false);
+    assert.ok(footer.endsWith(" EX :^[[100;1:3u_ "));
     assert.equal(session.editor.getMode(), "normal");
     assert.equal(session.editor.getText(), "hello");
     assert.deepEqual(session.notifications, []);
+  });
+
+  it("ex mini-mode escapes pasted control bytes in unsupported command notifications", () => {
+    const session = createEditorWithSpy("hello");
+
+    sendKeys(session.editor, [":", "\x1b[200~\x1b[2J\x1b[201~", "\r"]);
+
+    assert.equal(session.quitCalls, 0);
+    assert.equal(session.notifications.some((notification) => notification.includes("\x1b")), false);
+    assert.deepEqual(session.notifications, ["Unsupported ex command: :^[[2J"]);
+    assert.equal(session.editor.getMode(), "normal");
+    assert.equal(session.editor.getText(), "hello");
   });
 
   it("ex mini-mode filters key release remaining after split paste tail", () => {

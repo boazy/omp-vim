@@ -83,6 +83,26 @@ function isKeyReleaseEvent(data: string): boolean {
   return data.startsWith("\x1b[") && isKeyRelease(data);
 }
 
+function escapeTerminalControls(data: string): string {
+  let escaped = "";
+  for (const char of data) {
+    const codePoint = char.codePointAt(0);
+    if (codePoint === undefined) continue;
+    if (codePoint === 0x1b) {
+      escaped += "^[";
+    } else if (codePoint < 0x20) {
+      escaped += `^${String.fromCharCode(codePoint + 0x40)}`;
+    } else if (codePoint === 0x7f) {
+      escaped += "^?";
+    } else if (codePoint >= 0x80 && codePoint <= 0x9f) {
+      escaped += `\\x${codePoint.toString(16).padStart(2, "0")}`;
+    } else {
+      escaped += char;
+    }
+  }
+  return escaped;
+}
+
 type EditorSnapshot = {
   text: string;
   cursor: { line: number; col: number };
@@ -1530,7 +1550,7 @@ export function createModalEditor<TBase extends CustomEditorConstructor>(Base: T
     }
 
     if (command) {
-      this.notifyFn(`Unsupported ex command: :${command}`);
+      this.notifyFn(`Unsupported ex command: :${escapeTerminalControls(command)}`);
     }
   }
 
@@ -3330,7 +3350,7 @@ export function createModalEditor<TBase extends CustomEditorConstructor>(Base: T
 
   private getModeLabel(): string {
     if (this.mode === "insert") return " INSERT ";
-    if (this.pendingExCommand !== null) return ` EX ${this.pendingExCommand}_ `;
+    if (this.pendingExCommand !== null) return ` EX ${escapeTerminalControls(this.pendingExCommand)}_ `;
 
     const prefixCount = this.prefixCount;
     const operatorCount = this.operatorCount;
