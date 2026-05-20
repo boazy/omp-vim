@@ -74,8 +74,10 @@ type EditorFactory = (
   theme: ConstructorParameters<typeof ModalEditor>[1],
   keybindings: ConstructorParameters<typeof ModalEditor>[2],
 ) => ModalEditor;
+type Theme = ConstructorParameters<typeof ModalEditor>[1];
 
 type NotificationCall = { message: string; type: string };
+type ThemeFgCall = { token: string; text: string };
 
 function getRawEditor(editor: ModalEditor): ModalEditorTestInternals {
   return editor as unknown as ModalEditorTestInternals;
@@ -253,7 +255,28 @@ type InstalledExtension = {
   readonly sessionEndHandlerCount: number;
 };
 
-async function installExtensionWithEditorFactory(): Promise<InstalledExtension> {
+function createRecordingTheme(
+  rejectedTokens: readonly string[] = [],
+): Theme & { fgCalls: ThemeFgCall[] } {
+  const fgCalls: ThemeFgCall[] = [];
+  const rejected = new Set(rejectedTokens);
+  return {
+    borderColor: (s: string) => s,
+    fg: (token: string, text: string) => {
+      fgCalls.push({ token, text });
+      if (rejected.has(token)) {
+        throw new Error(`unknown theme token: ${token}`);
+      }
+      return `<${token}>${text}</${token}>`;
+    },
+    bold: (s: string) => s,
+    fgCalls,
+  } as unknown as Theme & { fgCalls: ThemeFgCall[] };
+}
+
+async function installExtensionWithEditorFactory(
+  theme: Theme = stubTheme,
+): Promise<InstalledExtension> {
   const pi = createExtensionApiHarness();
   let editorFactory: EditorFactory | null = null;
   let notificationCalls = 0;
@@ -263,7 +286,7 @@ async function installExtensionWithEditorFactory(): Promise<InstalledExtension> 
     cwd: process.cwd(),
     hasUI: true,
     ui: {
-      theme: stubTheme,
+      theme,
       setEditorComponent(factory: EditorFactory): void {
         editorFactory = factory;
       },
@@ -1187,6 +1210,138 @@ describe("clipboard mirror policy settings", () => {
       assert.equal(notification.type, "warning");
       assert.match(notification.message, /delete/);
       assert.match(notification.message, /all, yank, never/);
+    } finally {
+      restore();
+    }
+  });
+});
+
+describe("mode color settings", () => {
+  const reverseInsertLabel = "\x1b[7m INSERT \x1b[27m";
+
+  it("mode label uses default insert, normal, and EX mode color tokens", async () => {
+    const theme = createRecordingTheme();
+    const restore = setPiVimSettingsReaderForTests(() => ({}));
+
+    try {
+      const extension = await installExtensionWithEditorFactory(theme);
+      const editor = extension.editorFactory(
+        stubTui,
+        stubTheme,
+        stubKeybindings,
+      );
+
+      editor.render(80);
+      sendKeys(editor, ["\x1b"]);
+      editor.render(80);
+      sendKeys(editor, [":"]);
+      editor.render(80);
+
+      assert.deepEqual(
+        theme.fgCalls.map((call) => call.token),
+        ["borderMuted", "borderAccent", "warning"],
+      );
+    } finally {
+      restore();
+    }
+  });
+
+  it("mode label uses a custom insert mode color token", async () => {
+    const theme = createRecordingTheme();
+    const restore = setPiVimSettingsReaderForTests(() => ({
+      modeColors: { insert: "primary" },
+    }));
+
+    try {
+      const extension = await installExtensionWithEditorFactory(theme);
+      const editor = extension.editorFactory(
+        stubTui,
+        stubTheme,
+        stubKeybindings,
+      );
+
+      editor.render(80);
+
+      assert.deepEqual(theme.fgCalls, [
+        { token: "primary", text: reverseInsertLabel },
+      ]);
+    } finally {
+      restore();
+    }
+  });
+
+  it("mode label partial mode color overrides preserve default tokens", async () => {
+    const theme = createRecordingTheme();
+    const restore = setPiVimSettingsReaderForTests(() => ({
+      modeColors: { insert: "primary" },
+    }));
+
+    try {
+      const extension = await installExtensionWithEditorFactory(theme);
+      const editor = extension.editorFactory(
+        stubTui,
+        stubTheme,
+        stubKeybindings,
+      );
+
+      editor.render(80);
+      sendKeys(editor, ["\x1b"]);
+      editor.render(80);
+      sendKeys(editor, [":"]);
+      editor.render(80);
+
+      assert.deepEqual(
+        theme.fgCalls.map((call) => call.token),
+        ["primary", "borderAccent", "warning"],
+      );
+    } finally {
+      restore();
+    }
+  });
+
+  it("mode label falls back when the EX mode color token is unknown", async () => {
+    const theme = createRecordingTheme(["unknownToken"]);
+    const restore = setPiVimSettingsReaderForTests(() => ({
+      modeColors: { ex: "unknownToken" },
+    }));
+
+    try {
+      const extension = await installExtensionWithEditorFactory(theme);
+      const editor = extension.editorFactory(
+        stubTui,
+        stubTheme,
+        stubKeybindings,
+      );
+
+      sendKeys(editor, ["\x1b", ":"]);
+
+      assert.doesNotThrow(() => editor.render(80));
+      assert.deepEqual(
+        theme.fgCalls.map((call) => call.token),
+        ["unknownToken", "warning"],
+      );
+    } finally {
+      restore();
+    }
+  });
+
+  it("mode label passes reverse-video text to theme.fg", async () => {
+    const theme = createRecordingTheme();
+    const restore = setPiVimSettingsReaderForTests(() => ({}));
+
+    try {
+      const extension = await installExtensionWithEditorFactory(theme);
+      const editor = extension.editorFactory(
+        stubTui,
+        stubTheme,
+        stubKeybindings,
+      );
+
+      editor.render(80);
+
+      assert.deepEqual(theme.fgCalls, [
+        { token: "borderMuted", text: reverseInsertLabel },
+      ]);
     } finally {
       restore();
     }

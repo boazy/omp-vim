@@ -11,6 +11,7 @@ import {
 import {
   type ClipboardMirrorPolicy,
   DEFAULT_CLIPBOARD_MIRROR_POLICY,
+  type ModeColorSettings,
   type RegisterWriteSource,
   readPiVimSettings,
   resolveClipboardMirrorPolicy,
@@ -73,6 +74,12 @@ const CLIPBOARD_WRITE_TIMEOUT_MS = PI_NATIVE_CLIPBOARD_TIMEOUT_MS + 500;
 const CLIPBOARD_SPAWN_FAILURE_LIMIT = 3;
 const CLIPBOARD_READ_TIMEOUT_MS = 750;
 const CLIPBOARD_READ_MAX_BUFFER_BYTES = 1024 * 1024;
+const MODE_COLOR_DEFAULTS = {
+  insert: "borderMuted",
+  normal: "borderAccent",
+  ex: "warning",
+} satisfies Required<ModeColorSettings>;
+const SAFE_THEME_TOKEN = /^[A-Za-z][A-Za-z0-9_-]{0,63}$/;
 
 type EditorSnapshot = {
   text: string;
@@ -99,6 +106,7 @@ type ClipboardProcess = ReturnType<typeof spawn>;
 
 type ModeColorizers = Record<Mode | "ex", (s: string) => string>;
 type ModalEditorOptions = { labelColorizers?: ModeColorizers | null };
+type ThemeLike = { fg(token: string, text: string): string };
 
 type CursorShapeSequence =
   | typeof INSERT_CURSOR_SHAPE
@@ -112,6 +120,58 @@ type CursorShapeRuntime = {
 };
 
 type CursorShapeCleanup = () => void;
+
+function resolveModeColors(
+  colors?: ModeColorSettings,
+): Required<ModeColorSettings> {
+  return {
+    insert: colors?.insert ?? MODE_COLOR_DEFAULTS.insert,
+    normal: colors?.normal ?? MODE_COLOR_DEFAULTS.normal,
+    ex: colors?.ex ?? MODE_COLOR_DEFAULTS.ex,
+  };
+}
+
+function colorizeWithTheme(
+  theme: ThemeLike,
+  token: string,
+  fallbackToken: string,
+  text: string,
+): string {
+  const trimmedToken = token.trim();
+  if (!SAFE_THEME_TOKEN.test(trimmedToken))
+    return theme.fg(fallbackToken, text);
+
+  try {
+    return theme.fg(trimmedToken, text);
+  } catch {
+    return theme.fg(fallbackToken, text);
+  }
+}
+
+function buildModeColorizers(
+  theme: ThemeLike,
+  colors: Required<ModeColorSettings>,
+  transform: (text: string) => string = (text) => text,
+): ModeColorizers {
+  return {
+    insert: (s: string) =>
+      colorizeWithTheme(
+        theme,
+        colors.insert,
+        MODE_COLOR_DEFAULTS.insert,
+        transform(s),
+      ),
+    normal: (s: string) =>
+      colorizeWithTheme(
+        theme,
+        colors.normal,
+        MODE_COLOR_DEFAULTS.normal,
+        transform(s),
+      ),
+    ex: (s: string) =>
+      colorizeWithTheme(theme, colors.ex, MODE_COLOR_DEFAULTS.ex, transform(s)),
+  };
+}
 
 type CursorShapeTuiCandidate = {
   terminal?: { write?: unknown };
@@ -3290,13 +3350,10 @@ export default function (pi: ExtensionAPI) {
     }
 
     const t = ctx.ui.theme;
+    const modeColors = resolveModeColors(piVimSettings.modeColors);
     const reverseVideo = (s: string) => `\x1b[7m${s}\x1b[27m`;
     const colorizers = t
-      ? {
-          insert: (s: string) => t.fg("borderMuted", reverseVideo(s)),
-          normal: (s: string) => t.fg("borderAccent", reverseVideo(s)),
-          ex: (s: string) => t.fg("warning", reverseVideo(s)),
-        }
+      ? buildModeColorizers(t, modeColors, reverseVideo)
       : null;
     ctx.ui.setEditorComponent((tui, theme, kb) => {
       cursorShapeCleanup = enableCursorShapeSupport(tui);
