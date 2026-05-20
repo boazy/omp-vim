@@ -49,7 +49,10 @@ export function isBlankLine(line: string | undefined): boolean {
 /**
  * Paragraph start: non-blank line at BOF or after a blank line.
  */
-export function isParagraphStart(lines: readonly string[], lineIndex: number): boolean {
+export function isParagraphStart(
+  lines: readonly string[],
+  lineIndex: number,
+): boolean {
   if (!Number.isInteger(lineIndex)) return false;
   if (lineIndex < 0 || lineIndex >= lines.length) return false;
   if (isBlankLine(lines[lineIndex])) return false;
@@ -60,7 +63,10 @@ export function isParagraphStart(lines: readonly string[], lineIndex: number): b
 /**
  * One step of } motion from current line index.
  */
-export function findNextParagraphStart(lines: readonly string[], fromLine: number): number {
+export function findNextParagraphStart(
+  lines: readonly string[],
+  fromLine: number,
+): number {
   if (lines.length === 0) return 0;
 
   const start = clampLineIndex(lines, fromLine) + 1;
@@ -74,7 +80,10 @@ export function findNextParagraphStart(lines: readonly string[], fromLine: numbe
 /**
  * One step of { motion from current line index.
  */
-export function findPrevParagraphStart(lines: readonly string[], fromLine: number): number {
+export function findPrevParagraphStart(
+  lines: readonly string[],
+  fromLine: number,
+): number {
   if (lines.length === 0) return 0;
 
   const start = clampLineIndex(lines, fromLine) - 1;
@@ -125,16 +134,21 @@ export function reverseCharMotion(motion: CharMotion): CharMotion {
   return reverseMap[motion];
 }
 
-const GRAPHEME_SEGMENTER = typeof Intl !== "undefined"
-  && typeof Intl.Segmenter === "function"
-  ? new Intl.Segmenter(undefined, { granularity: "grapheme" })
-  : null;
+const GRAPHEME_SEGMENTER =
+  typeof Intl !== "undefined" && typeof Intl.Segmenter === "function"
+    ? new Intl.Segmenter(undefined, { granularity: "grapheme" })
+    : null;
 
-export function getLineGraphemes(line: string): Array<{ start: number; end: number }> {
+export function getLineGraphemes(
+  line: string,
+): Array<{ start: number; end: number }> {
   const segments: Array<{ start: number; end: number }> = [];
   if (GRAPHEME_SEGMENTER) {
     for (const part of GRAPHEME_SEGMENTER.segment(line)) {
-      segments.push({ start: part.index, end: part.index + part.segment.length });
+      segments.push({
+        start: part.index,
+        end: part.index + part.segment.length,
+      });
     }
     return segments;
   }
@@ -163,7 +177,7 @@ export function findCharMotionTarget(
   const steps = Number.isFinite(count) && count > 0 ? Math.floor(count) : 1;
 
   const graphemes = getLineGraphemes(line);
-  let currentIndex = graphemes.findIndex(g => col < g.end);
+  let currentIndex = graphemes.findIndex((g) => col < g.end);
   if (currentIndex === -1) currentIndex = graphemes.length;
 
   for (let i = 0; i < steps; i++) {
@@ -179,7 +193,10 @@ export function findCharMotionTarget(
         if (!g) continue;
         // Use startsWith to allow matching base chars if targetChar lacks combining marks,
         // or just exact match since targetChar is typically a full grapheme.
-        if (line.slice(g.start, g.end) === targetChar || line.slice(g.start, g.end).startsWith(targetChar)) {
+        if (
+          line.slice(g.start, g.end) === targetChar ||
+          line.slice(g.start, g.end).startsWith(targetChar)
+        ) {
           found = j;
           break;
         }
@@ -199,7 +216,10 @@ export function findCharMotionTarget(
       for (let j = nextIndex; j >= 0; j--) {
         const g = graphemes[j];
         if (!g) continue;
-        if (line.slice(g.start, g.end) === targetChar || line.slice(g.start, g.end).startsWith(targetChar)) {
+        if (
+          line.slice(g.start, g.end) === targetChar ||
+          line.slice(g.start, g.end).startsWith(targetChar)
+        ) {
           found = j;
           break;
         }
@@ -243,11 +263,13 @@ export function findWordMotionTarget(
 
       // Skip current word/punct block
       if (startType !== CharType.Space) {
-        while (i < len && getCharType(line[i], semanticClass) === startType) i++;
+        while (i < len && getCharType(line[i], semanticClass) === startType)
+          i++;
       }
 
       // Skip whitespace
-      while (i < len && getCharType(line[i], semanticClass) === CharType.Space) i++;
+      while (i < len && getCharType(line[i], semanticClass) === CharType.Space)
+        i++;
 
       return i;
     }
@@ -256,7 +278,8 @@ export function findWordMotionTarget(
     if (i < len - 1) i++;
 
     // Skip whitespace forward
-    while (i < len && getCharType(line[i], semanticClass) === CharType.Space) i++;
+    while (i < len && getCharType(line[i], semanticClass) === CharType.Space)
+      i++;
 
     // Now at start of next word (or end of line). Find end.
     if (i >= len) return len;

@@ -9,9 +9,5 @@
     "allowJs": false,
     "types": ["node"]
   },
-  "include": [
-    "*.ts",
-    "script/**/*.ts",
-    "test/**/*.ts"
-  ]
+  "include": ["*.ts", "script/**/*.ts", "test/**/*.ts"]
 }

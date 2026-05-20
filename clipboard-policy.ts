@@ -12,7 +12,8 @@ type UnknownRecord = Record<string, unknown>;
 const missing = Symbol();
 
 function formatInvalid(value: unknown) {
-  const type = value === null ? "null" : Array.isArray(value) ? "array" : typeof value;
+  const type =
+    value === null ? "null" : Array.isArray(value) ? "array" : typeof value;
   try {
     return `${JSON.stringify(value) ?? type} (type ${type})`;
   } catch {
@@ -21,10 +22,18 @@ function formatInvalid(value: unknown) {
 }
 
 function readSetting(settings: unknown): unknown {
-  if (typeof settings !== "object" || settings === null || !Object.hasOwn(settings, "piVim")) return missing;
+  if (
+    typeof settings !== "object" ||
+    settings === null ||
+    !Object.hasOwn(settings, "piVim")
+  )
+    return missing;
   const piVim = (settings as UnknownRecord).piVim;
-  if (typeof piVim !== "object" || piVim === null || Array.isArray(piVim)) return piVim;
-  return Object.hasOwn(piVim, "clipboardMirror") ? (piVim as UnknownRecord).clipboardMirror : missing;
+  if (typeof piVim !== "object" || piVim === null || Array.isArray(piVim))
+    return piVim;
+  return Object.hasOwn(piVim, "clipboardMirror")
+    ? (piVim as UnknownRecord).clipboardMirror
+    : missing;
 }
 
 export function resolveClipboardMirrorPolicy(value: unknown) {
@@ -43,7 +52,10 @@ export function resolveClipboardMirrorPolicy(value: unknown) {
   };
 }
 
-export function readPiVimClipboardMirrorSetting(globalSettings: unknown, projectSettings: unknown): unknown | undefined {
+export function readPiVimClipboardMirrorSetting(
+  globalSettings: unknown,
+  projectSettings: unknown,
+): unknown | undefined {
   const project = readSetting(projectSettings);
   if (project !== missing) return project;
   const global = readSetting(globalSettings);
@@ -53,7 +65,10 @@ export function readPiVimClipboardMirrorSetting(globalSettings: unknown, project
 function readPiVimSettingsFromDisk(cwd: string): PiVimSettings {
   const settings = SettingsManager.create(cwd);
   return {
-    clipboardMirror: readPiVimClipboardMirrorSetting(settings.getGlobalSettings(), settings.getProjectSettings()),
+    clipboardMirror: readPiVimClipboardMirrorSetting(
+      settings.getGlobalSettings(),
+      settings.getProjectSettings(),
+    ),
   };
 }
 
@@ -63,7 +78,9 @@ export function readPiVimSettings(cwd: string) {
   return piVimSettingsReader(cwd);
 }
 
-export function setPiVimSettingsReaderForTests(reader: typeof readPiVimSettingsFromDisk) {
+export function setPiVimSettingsReaderForTests(
+  reader: typeof readPiVimSettingsFromDisk,
+) {
   const prev = piVimSettingsReader;
   piVimSettingsReader = reader;
 

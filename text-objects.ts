@@ -34,10 +34,14 @@ function clampCursorAbs(text: string, cursorAbs: number): number {
   return Math.max(0, Math.min(normalized, text.length - 1));
 }
 
-function findLogicalLineBounds(line: string, cursorCol: number): { start: number; end: number } {
+function findLogicalLineBounds(
+  line: string,
+  cursorCol: number,
+): { start: number; end: number } {
   if (line.length === 0) return { start: 0, end: 0 };
 
-  const previousSearchStart = line[cursorCol] === "\n" ? cursorCol - 1 : cursorCol;
+  const previousSearchStart =
+    line[cursorCol] === "\n" ? cursorCol - 1 : cursorCol;
   const start = line.lastIndexOf("\n", previousSearchStart) + 1;
   const nextNewline = line.indexOf("\n", cursorCol);
 
@@ -47,7 +51,10 @@ function findLogicalLineBounds(line: string, cursorCol: number): { start: number
   };
 }
 
-function findCurrentLineBounds(text: string, cursorAbs: number): { startAbs: number; endAbs: number } {
+function findCurrentLineBounds(
+  text: string,
+  cursorAbs: number,
+): { startAbs: number; endAbs: number } {
   const cursor = clampCursorAbs(text, cursorAbs);
   const bounds = findLogicalLineBounds(text, cursor);
 
@@ -57,7 +64,10 @@ function findCurrentLineBounds(text: string, cursorAbs: number): { startAbs: num
   };
 }
 
-function isWordTextObjectChar(ch: string | undefined, semanticClass: WordTextObjectClass): boolean {
+function isWordTextObjectChar(
+  ch: string | undefined,
+  semanticClass: WordTextObjectClass,
+): boolean {
   if (ch === undefined) return false;
   if (semanticClass === "WORD") return !/\s/.test(ch);
   return /\w/.test(ch);
@@ -68,7 +78,7 @@ function isWhitespace(ch: string | undefined): boolean {
 }
 
 export function normalizeDelimiterKey(key: string): DelimiterSpec | null {
-  if (key === "\"" || key === "'" || key === "`") {
+  if (key === '"' || key === "'" || key === "`") {
     return {
       type: "quote",
       open: key,
@@ -104,7 +114,8 @@ export function normalizeDelimiterKey(key: string): DelimiterSpec | null {
 }
 
 export function isEscapedDelimiter(text: string, index: number): boolean {
-  if (!Number.isInteger(index) || index <= 0 || index >= text.length) return false;
+  if (!Number.isInteger(index) || index <= 0 || index >= text.length)
+    return false;
 
   let backslashCount = 0;
   for (let i = index - 1; i >= 0 && text[i] === "\\"; i--) {
@@ -140,7 +151,10 @@ export function resolveQuoteObjectRange(
 
     const closeIndex = index;
     if (openIndex <= cursor && cursor <= closeIndex) {
-      if (bestPair === null || closeIndex - openIndex < bestPair.close - bestPair.open) {
+      if (
+        bestPair === null ||
+        closeIndex - openIndex < bestPair.close - bestPair.open
+      ) {
         bestPair = { open: openIndex, close: closeIndex };
       }
     }
@@ -189,7 +203,10 @@ export function resolveBracketObjectRange(
     if (openIndex === undefined) continue;
 
     if (openIndex <= cursor && cursor <= index) {
-      if (bestPair === null || index - openIndex < bestPair.close - bestPair.open) {
+      if (
+        bestPair === null ||
+        index - openIndex < bestPair.close - bestPair.open
+      ) {
         bestPair = { open: openIndex, close: index };
       }
     }
@@ -224,7 +241,13 @@ export function resolveDelimitedTextObjectRange(
   }
 
   if (spec.type === "bracket") {
-    return resolveBracketObjectRange(text, cursorAbs, kind, spec.open, spec.close);
+    return resolveBracketObjectRange(
+      text,
+      cursorAbs,
+      kind,
+      spec.open,
+      spec.close,
+    );
   }
 
   return null;
@@ -244,11 +267,10 @@ export function resolveWordTextObjectRange(
   const bounds = findLogicalLineBounds(line, cursor);
   if (bounds.start >= bounds.end) return null;
 
-  const hasWordChar = (idx: number) => (
-    idx >= bounds.start
-    && idx < bounds.end
-    && isWordTextObjectChar(line[idx], semanticClass)
-  );
+  const hasWordChar = (idx: number) =>
+    idx >= bounds.start &&
+    idx < bounds.end &&
+    isWordTextObjectChar(line[idx], semanticClass);
 
   let col = Math.max(bounds.start, Math.min(cursor, bounds.end - 1));
 
@@ -275,7 +297,8 @@ export function resolveWordTextObjectRange(
   let remaining = normalizeCount(count) - 1;
   while (remaining > 0) {
     let nextWordStart = end;
-    while (nextWordStart < bounds.end && !hasWordChar(nextWordStart)) nextWordStart++;
+    while (nextWordStart < bounds.end && !hasWordChar(nextWordStart))
+      nextWordStart++;
     if (nextWordStart >= bounds.end) break;
 
     let nextWordEnd = nextWordStart + 1;

@@ -1,9 +1,6 @@
 import { spawn, spawnSync } from "node:child_process";
 
-import {
-  CustomEditor,
-  type ExtensionAPI,
-} from "@mariozechner/pi-coding-agent";
+import { CustomEditor, type ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import {
   CURSOR_MARKER,
   Key,
@@ -11,48 +8,21 @@ import {
   truncateToWidth,
   visibleWidth,
 } from "@mariozechner/pi-tui";
-
-import type {
-  Mode,
-  CharMotion,
-  PendingMotion,
-  PendingOperator,
-  LastCharMotion,
-} from "./types.js";
 import {
-  NORMAL_KEYS,
-  CHAR_MOTION_KEYS,
-  ESC_LEFT,
-  ESC_RIGHT,
-  ESC_UP,
-  CTRL_A,
-  CTRL_E,
-  CTRL_K,
-  CTRL_R,
-  CTRL_UNDERSCORE,
-  NEWLINE,
-  ESC_DOWN,
-} from "./types.js";
-import {
-  reverseCharMotion,
-  findCharMotionTarget,
-  findParagraphMotionTarget,
-  findFirstNonWhitespaceColumn,
-  getLineGraphemes,
-  type WordMotionClass,
-} from "./motions.js";
-import {
-  WordBoundaryCache,
-  type WordMotionDirection,
-  type WordMotionTarget,
-} from "./word-boundary-cache.js";
-import {
+  type ClipboardMirrorPolicy,
   DEFAULT_CLIPBOARD_MIRROR_POLICY,
+  type RegisterWriteSource,
   readPiVimSettings,
   resolveClipboardMirrorPolicy,
-  type ClipboardMirrorPolicy,
-  type RegisterWriteSource,
 } from "./clipboard-policy.js";
+import {
+  findCharMotionTarget,
+  findFirstNonWhitespaceColumn,
+  findParagraphMotionTarget,
+  getLineGraphemes,
+  reverseCharMotion,
+  type WordMotionClass,
+} from "./motions.js";
 import {
   resolveDelimitedTextObjectRange,
   resolveWordTextObjectRange,
@@ -60,6 +30,32 @@ import {
   type TextObjectRange,
   type WordTextObjectClass,
 } from "./text-objects.js";
+import type {
+  CharMotion,
+  LastCharMotion,
+  Mode,
+  PendingMotion,
+  PendingOperator,
+} from "./types.js";
+import {
+  CHAR_MOTION_KEYS,
+  CTRL_A,
+  CTRL_E,
+  CTRL_K,
+  CTRL_R,
+  CTRL_UNDERSCORE,
+  ESC_DOWN,
+  ESC_LEFT,
+  ESC_RIGHT,
+  ESC_UP,
+  NEWLINE,
+  NORMAL_KEYS,
+} from "./types.js";
+import {
+  WordBoundaryCache,
+  type WordMotionDirection,
+  type WordMotionTarget,
+} from "./word-boundary-cache.js";
 
 const BRACKETED_PASTE_START = "\x1b[200~";
 const BRACKETED_PASTE_END = "\x1b[201~";
@@ -135,7 +131,10 @@ function getCursorShapeRuntime(tui: unknown): CursorShapeRuntime | null {
 
   const write = terminal.write;
   const setShowHardwareCursor = candidate.setShowHardwareCursor;
-  if (typeof write !== "function" || typeof setShowHardwareCursor !== "function") {
+  if (
+    typeof write !== "function" ||
+    typeof setShowHardwareCursor !== "function"
+  ) {
     return null;
   }
 
@@ -178,7 +177,10 @@ function findSoftwareCursorReset(
   line: string,
   startIndex: number,
 ): { index: number; sequence: (typeof SOFTWARE_CURSOR_RESETS)[number] } | null {
-  let firstReset: { index: number; sequence: (typeof SOFTWARE_CURSOR_RESETS)[number] } | null = null;
+  let firstReset: {
+    index: number;
+    sequence: (typeof SOFTWARE_CURSOR_RESETS)[number];
+  } | null = null;
 
   for (const sequence of SOFTWARE_CURSOR_RESETS) {
     const index = line.indexOf(sequence, startIndex);
@@ -203,9 +205,11 @@ function stripSoftwareCursorAfterMarker(line: string): string {
   const reset = findSoftwareCursorReset(line, cursorContentStart);
   if (!reset) return line;
 
-  return line.slice(0, cursorStart)
-    + line.slice(cursorContentStart, reset.index)
-    + line.slice(reset.index + reset.sequence.length);
+  return (
+    line.slice(0, cursorStart) +
+    line.slice(cursorContentStart, reset.index) +
+    line.slice(reset.index + reset.sequence.length)
+  );
 }
 
 type ClipboardCircuitBreaker = {
@@ -236,17 +240,21 @@ function isNodeSpawnErrno(error: unknown): boolean {
   if (!(error instanceof Error)) return false;
 
   const candidate = error as SpawnErrnoLike;
-  return typeof candidate.code === "string"
-    && candidate.code.length > 0
-    && typeof candidate.syscall === "string"
-    && candidate.syscall.startsWith("spawn");
+  return (
+    typeof candidate.code === "string" &&
+    candidate.code.length > 0 &&
+    typeof candidate.syscall === "string" &&
+    candidate.syscall.startsWith("spawn")
+  );
 }
 
 function isClipboardEnvironmentFailure(error: unknown): boolean {
   return error instanceof ClipboardSpawnError || isNodeSpawnErrno(error);
 }
 
-const PI_CODING_AGENT_MODULE_URL = import.meta.resolve("@mariozechner/pi-coding-agent");
+const PI_CODING_AGENT_MODULE_URL = import.meta.resolve(
+  "@mariozechner/pi-coding-agent",
+);
 const CLIPBOARD_HELPER_SOURCE = `
 import { copyToClipboard } from ${JSON.stringify(PI_CODING_AGENT_MODULE_URL)};
 
@@ -320,7 +328,10 @@ function killClipboardProcess(child: ClipboardProcess): void {
   }
 }
 
-function writeClipboardInChildProcess(text: string, signal: AbortSignal): Promise<void> {
+function writeClipboardInChildProcess(
+  text: string,
+  signal: AbortSignal,
+): Promise<void> {
   return new Promise<void>((resolve, reject) => {
     if (signal.aborted) {
       reject(getAbortError(signal));
@@ -350,12 +361,20 @@ function writeClipboardInChildProcess(text: string, signal: AbortSignal): Promis
     }
 
     try {
-      child = spawn(process.execPath, ["--input-type=module", "-e", CLIPBOARD_HELPER_SOURCE], {
-        stdio: ["pipe", "pipe", "ignore"],
-        windowsHide: true,
-      });
+      child = spawn(
+        process.execPath,
+        ["--input-type=module", "-e", CLIPBOARD_HELPER_SOURCE],
+        {
+          stdio: ["pipe", "pipe", "ignore"],
+          windowsHide: true,
+        },
+      );
     } catch (error) {
-      finish(new ClipboardSpawnError("clipboard helper spawn failed", { cause: error }));
+      finish(
+        new ClipboardSpawnError("clipboard helper spawn failed", {
+          cause: error,
+        }),
+      );
       return;
     }
 
@@ -369,7 +388,11 @@ function writeClipboardInChildProcess(text: string, signal: AbortSignal): Promis
     });
 
     child.once("error", (error) => {
-      finish(new ClipboardSpawnError("clipboard helper spawn failed", { cause: error }));
+      finish(
+        new ClipboardSpawnError("clipboard helper spawn failed", {
+          cause: error,
+        }),
+      );
     });
 
     child.once("close", (code) => {
@@ -393,7 +416,11 @@ function writeClipboardInChildProcess(text: string, signal: AbortSignal): Promis
         return;
       }
 
-      finish(new ClipboardSpawnError(`clipboard helper failed with exit code ${code ?? "null"}`));
+      finish(
+        new ClipboardSpawnError(
+          `clipboard helper failed with exit code ${code ?? "null"}`,
+        ),
+      );
     });
 
     if (!child.stdin) {
@@ -436,7 +463,9 @@ class ClipboardMirror {
   ) {}
 
   setWriteFn(writeFn: ClipboardWriteFn): void {
-    this.activeController?.abort(createClipboardAbortError("clipboard writer replaced"));
+    this.activeController?.abort(
+      createClipboardAbortError("clipboard writer replaced"),
+    );
     this.writeFn = writeFn;
     resetClipboardCircuitBreaker();
   }
@@ -446,7 +475,9 @@ class ClipboardMirror {
   }
 
   hasPendingWrite(): boolean {
-    return this.activeText !== null || this.pendingText !== null || this.draining;
+    return (
+      this.activeText !== null || this.pendingText !== null || this.draining
+    );
   }
 
   mirror(text: string): void {
@@ -503,13 +534,19 @@ class ClipboardMirror {
     }
 
     this.circuitBreaker.consecutiveEnvironmentFailures += 1;
-    if (this.circuitBreaker.consecutiveEnvironmentFailures >= CLIPBOARD_SPAWN_FAILURE_LIMIT) {
+    if (
+      this.circuitBreaker.consecutiveEnvironmentFailures >=
+      CLIPBOARD_SPAWN_FAILURE_LIMIT
+    ) {
       this.circuitBreaker.disabled = true;
       this.pendingText = null;
     }
   }
 
-  private async writeWithTimeout(text: string, controller: AbortController): Promise<void> {
+  private async writeWithTimeout(
+    text: string,
+    controller: AbortController,
+  ): Promise<void> {
     const timeoutError = createClipboardAbortError("clipboard write timed out");
     const timeoutId = setTimeout(() => {
       controller.abort(timeoutError);
@@ -555,8 +592,11 @@ export class ModalEditor extends CustomEditor {
   // Unnamed register
   private unnamedRegister: string = "";
   private preferRegisterForPut = false;
-  private clipboardMirrorPolicy: ClipboardMirrorPolicy = DEFAULT_CLIPBOARD_MIRROR_POLICY;
-  private readonly clipboardMirror = new ClipboardMirror(writeClipboardInChildProcess);
+  private clipboardMirrorPolicy: ClipboardMirrorPolicy =
+    DEFAULT_CLIPBOARD_MIRROR_POLICY;
+  private readonly clipboardMirror = new ClipboardMirror(
+    writeClipboardInChildProcess,
+  );
   private clipboardReadFn: ClipboardReadFn = readClipboardInChildProcess;
   private quitFn: () => void = () => {};
   private notifyFn: (message: string) => void = () => {};
@@ -574,9 +614,11 @@ export class ModalEditor extends CustomEditor {
 
   // Test seams
   setClipboardFn(fn: (text: string, signal?: AbortSignal) => unknown): void {
-    this.clipboardMirror.setWriteFn(async (text: string, signal: AbortSignal) => {
-      await fn(text, signal);
-    });
+    this.clipboardMirror.setWriteFn(
+      async (text: string, signal: AbortSignal) => {
+        await fn(text, signal);
+      },
+    );
   }
   setClipboardWriteTimeoutMs(timeoutMs: number): void {
     this.clipboardMirror.setTimeoutMs(timeoutMs);
@@ -590,15 +632,25 @@ export class ModalEditor extends CustomEditor {
   getClipboardMirrorPolicy(): ClipboardMirrorPolicy {
     return this.clipboardMirrorPolicy;
   }
-  setQuitFn(fn: () => void): void { this.quitFn = fn; }
-  setNotifyFn(fn: (message: string) => void): void { this.notifyFn = fn; }
-  getRegister(): string { return this.unnamedRegister; }
+  setQuitFn(fn: () => void): void {
+    this.quitFn = fn;
+  }
+  setNotifyFn(fn: (message: string) => void): void {
+    this.notifyFn = fn;
+  }
+  getRegister(): string {
+    return this.unnamedRegister;
+  }
   setRegister(text: string): void {
     this.unnamedRegister = text;
     this.preferRegisterForPut = false;
   }
-  getMode(): Mode { return this.mode; }
-  getText(): string { return this.getLines().join("\n"); }
+  getMode(): Mode {
+    return this.mode;
+  }
+  getText(): string {
+    return this.getLines().join("\n");
+  }
 
   override setText(text: string): void {
     this.clearRedoStack();
@@ -613,14 +665,20 @@ export class ModalEditor extends CustomEditor {
     };
   }
 
-  private requireRedoRestoreState(
-    editor: ModalEditorInternals,
-  ): { lines: string[]; cursorLine?: number; cursorCol?: number } {
+  private requireRedoRestoreState(editor: ModalEditorInternals): {
+    lines: string[];
+    cursorLine?: number;
+    cursorCol?: number;
+  } {
     const state = editor.state;
     if (!state || !Array.isArray(state.lines)) {
       throw new Error("Redo restore prerequisite: editor state unavailable");
     }
-    return state as { lines: string[]; cursorLine?: number; cursorCol?: number };
+    return state as {
+      lines: string[];
+      cursorLine?: number;
+      cursorCol?: number;
+    };
   }
 
   private restoreSnapshot(snapshot: EditorSnapshot): void {
@@ -652,9 +710,11 @@ export class ModalEditor extends CustomEditor {
   }
 
   private snapshotChanged(a: EditorSnapshot, b: EditorSnapshot): boolean {
-    return a.text !== b.text
-      || a.cursor.line !== b.cursor.line
-      || a.cursor.col !== b.cursor.col;
+    return (
+      a.text !== b.text ||
+      a.cursor.line !== b.cursor.line ||
+      a.cursor.col !== b.cursor.col
+    );
   }
 
   private withTransition<T>(
@@ -741,9 +801,7 @@ export class ModalEditor extends CustomEditor {
   private applySyntheticEdit(mutation: () => void): void {
     const editor = this as unknown as ModalEditorInternals;
     if (!editor.state || !Array.isArray(editor.state.lines)) {
-      throw new Error(
-        "Synthetic edit prerequisite: editor state unavailable",
-      );
+      throw new Error("Synthetic edit prerequisite: editor state unavailable");
     }
 
     if (typeof editor.pushUndoSnapshot !== "function") {
@@ -790,8 +848,9 @@ export class ModalEditor extends CustomEditor {
   }
 
   private clearPendingExCommand(): void {
-    const shouldDiscardBracketedPasteTail = this.acceptingBracketedPasteInExCommand
-      || this.pendingEscWhileAcceptingBracketedPasteInExCommand;
+    const shouldDiscardBracketedPasteTail =
+      this.acceptingBracketedPasteInExCommand ||
+      this.pendingEscWhileAcceptingBracketedPasteInExCommand;
 
     this.pendingExCommand = null;
     this.acceptingBracketedPasteInExCommand = false;
@@ -875,7 +934,10 @@ export class ModalEditor extends CustomEditor {
     }
   }
 
-  private stripBracketedPasteInNormalMode(data: string): { filtered: string | null; stripped: boolean } {
+  private stripBracketedPasteInNormalMode(data: string): {
+    filtered: string | null;
+    stripped: boolean;
+  } {
     let chunk = data;
     let stripped = false;
 
@@ -898,14 +960,18 @@ export class ModalEditor extends CustomEditor {
       }
 
       stripped = true;
-      const end = chunk.indexOf(BRACKETED_PASTE_END, start + BRACKETED_PASTE_START.length);
+      const end = chunk.indexOf(
+        BRACKETED_PASTE_END,
+        start + BRACKETED_PASTE_START.length,
+      );
       if (end === -1) {
         this.discardingBracketedPasteInNormalMode = true;
         const leading = chunk.slice(0, start);
         return { filtered: leading.length > 0 ? leading : null, stripped };
       }
 
-      chunk = chunk.slice(0, start) + chunk.slice(end + BRACKETED_PASTE_END.length);
+      chunk =
+        chunk.slice(0, start) + chunk.slice(end + BRACKETED_PASTE_END.length);
       if (!chunk) return { filtered: null, stripped };
     }
   }
@@ -1003,9 +1069,14 @@ export class ModalEditor extends CustomEditor {
       const replacement = data.repeat(count);
       const lineStartAbs = this.getAbsoluteIndex(cursor.line, 0);
       const text = this.getText();
-      const newText = text.slice(0, lineStartAbs) + before + replacement + after
-        + text.slice(lineStartAbs + line.length);
-      const newCursorAbs = lineStartAbs + before.length + data.length * (count - 1);
+      const newText =
+        text.slice(0, lineStartAbs) +
+        before +
+        replacement +
+        after +
+        text.slice(lineStartAbs + line.length);
+      const newCursorAbs =
+        lineStartAbs + before.length + data.length * (count - 1);
       this.replaceTextInBuffer(newText, newCursorAbs);
       return;
     }
@@ -1068,14 +1139,14 @@ export class ModalEditor extends CustomEditor {
     }
 
     if (
-      this.pendingMotion
-      || this.pendingTextObject
-      || this.pendingOperator
-      || this.prefixCount
-      || this.operatorCount
-      || this.pendingG
-      || this.pendingGCount
-      || this.pendingReplace
+      this.pendingMotion ||
+      this.pendingTextObject ||
+      this.pendingOperator ||
+      this.prefixCount ||
+      this.operatorCount ||
+      this.pendingG ||
+      this.pendingGCount ||
+      this.pendingReplace
     ) {
       this.clearPendingState();
       return;
@@ -1089,11 +1160,21 @@ export class ModalEditor extends CustomEditor {
   }
 
   private isEnterLikeInput(data: string): boolean {
-    return data === "\r" || data === "\n" || matchesKey(data, "enter") || matchesKey(data, "return");
+    return (
+      data === "\r" ||
+      data === "\n" ||
+      matchesKey(data, "enter") ||
+      matchesKey(data, "return")
+    );
   }
 
   private isBackspaceLikeInput(data: string): boolean {
-    return data === "\x7f" || data === "\x08" || matchesKey(data, "backspace") || matchesKey(data, "ctrl+h");
+    return (
+      data === "\x7f" ||
+      data === "\x08" ||
+      matchesKey(data, "backspace") ||
+      matchesKey(data, "ctrl+h")
+    );
   }
 
   private deleteLastPendingExCommandGrapheme(): void {
@@ -1116,10 +1197,10 @@ export class ModalEditor extends CustomEditor {
 
   private handlePendingExCommandControlChunk(data: string): boolean {
     if (
-      !data.includes("\r")
-      && !data.includes("\n")
-      && !data.includes("\x7f")
-      && !data.includes("\x08")
+      !data.includes("\r") &&
+      !data.includes("\n") &&
+      !data.includes("\x7f") &&
+      !data.includes("\x08")
     ) {
       return false;
     }
@@ -1216,7 +1297,8 @@ export class ModalEditor extends CustomEditor {
     if (data.length === 0) return false;
     for (const char of data) {
       const codePoint = char.codePointAt(0);
-      if (codePoint === undefined || codePoint < 32 || codePoint === 127) return false;
+      if (codePoint === undefined || codePoint < 32 || codePoint === 127)
+        return false;
     }
     return true;
   }
@@ -1253,9 +1335,10 @@ export class ModalEditor extends CustomEditor {
 
     if (prefix === null && operator === null) return defaultValue;
 
-    const total = prefix !== null && operator !== null
-      ? prefix * operator
-      : prefix ?? operator ?? defaultValue;
+    const total =
+      prefix !== null && operator !== null
+        ? prefix * operator
+        : (prefix ?? operator ?? defaultValue);
 
     if (!Number.isFinite(total) || total <= 0) return defaultValue;
     return Math.min(MAX_COUNT, total);
@@ -1319,7 +1402,11 @@ export class ModalEditor extends CustomEditor {
     if (data === "w" || data === "W") {
       const semanticClass: WordTextObjectClass = data === "W" ? "WORD" : "word";
       const count = this.takeTotalCount(1);
-      const range = this.getWordObjectRange(pendingTextObject, count, semanticClass);
+      const range = this.getWordObjectRange(
+        pendingTextObject,
+        count,
+        semanticClass,
+      );
       if (!range || !this.pendingOperator) {
         this.pendingOperator = null;
         return;
@@ -1399,7 +1486,8 @@ export class ModalEditor extends CustomEditor {
     }
 
     if (data === "j" || data === "k") {
-      const hasDualCount = this.prefixCount.length > 0 && this.operatorCount.length > 0;
+      const hasDualCount =
+        this.prefixCount.length > 0 && this.operatorCount.length > 0;
       const count = this.takeTotalCount(1);
       const delta = hasDualCount ? Math.max(0, count - 1) : count;
       this.deleteLinewiseByDelta(data === "j" ? delta : -delta);
@@ -1430,15 +1518,15 @@ export class ModalEditor extends CustomEditor {
       return;
     }
 
-    const hasCount = this.prefixCount.length > 0 || this.operatorCount.length > 0;
-    const supportsCountedWordMotion = (
-      data === "w"
-      || data === "e"
-      || data === "b"
-      || data === "W"
-      || data === "E"
-      || data === "B"
-    );
+    const hasCount =
+      this.prefixCount.length > 0 || this.operatorCount.length > 0;
+    const supportsCountedWordMotion =
+      data === "w" ||
+      data === "e" ||
+      data === "b" ||
+      data === "W" ||
+      data === "E" ||
+      data === "B";
     const supportsCountedTextObject = data === "i" || data === "a";
 
     if (hasCount && !supportsCountedWordMotion && !supportsCountedTextObject) {
@@ -1514,15 +1602,15 @@ export class ModalEditor extends CustomEditor {
       return;
     }
 
-    const hasCount = this.prefixCount.length > 0 || this.operatorCount.length > 0;
-    const supportsCountedWordMotion = (
-      data === "w"
-      || data === "e"
-      || data === "b"
-      || data === "W"
-      || data === "E"
-      || data === "B"
-    );
+    const hasCount =
+      this.prefixCount.length > 0 || this.operatorCount.length > 0;
+    const supportsCountedWordMotion =
+      data === "w" ||
+      data === "e" ||
+      data === "b" ||
+      data === "W" ||
+      data === "E" ||
+      data === "B";
     const supportsCountedTextObject = data === "i" || data === "a";
 
     if (hasCount && !supportsCountedWordMotion && !supportsCountedTextObject) {
@@ -1536,9 +1624,8 @@ export class ModalEditor extends CustomEditor {
     }
 
     const motionCount = supportsCountedWordMotion ? this.takeTotalCount(1) : 1;
-    const effectiveMotion = data === "W" && this.isCursorOnNonWhitespace()
-      ? "E"
-      : data;
+    const effectiveMotion =
+      data === "W" && this.isCursorOnNonWhitespace() ? "E" : data;
     if (this.deleteWithMotion(effectiveMotion, motionCount)) {
       this.pendingOperator = null;
       this.mode = "insert";
@@ -1605,43 +1692,34 @@ export class ModalEditor extends CustomEditor {
         return;
       }
 
-      const supportsCountedStandaloneEdit = (
-        data === "x"
-        || data === "r"
-        || data === "s"
-        || data === "S"
-        || data === "D"
-        || data === "C"
-        || data === "p"
-        || data === "P"
-        || data === "Y"
-        || data === "J"
-        || data === "u"
-        || data === CTRL_UNDERSCORE
-        || matchesKey(data, "ctrl+_")
-        || data === CTRL_R
-        || matchesKey(data, "ctrl+r")
-      );
-      const supportsCountedCharMotion = (
-        CHAR_MOTION_KEYS.has(data)
-        || data === ";"
-        || data === ","
-      );
-      const supportsCountedWordMotion = (
-        data === "w"
-        || data === "e"
-        || data === "b"
-        || data === "W"
-        || data === "E"
-        || data === "B"
-      );
+      const supportsCountedStandaloneEdit =
+        data === "x" ||
+        data === "r" ||
+        data === "s" ||
+        data === "S" ||
+        data === "D" ||
+        data === "C" ||
+        data === "p" ||
+        data === "P" ||
+        data === "Y" ||
+        data === "J" ||
+        data === "u" ||
+        data === CTRL_UNDERSCORE ||
+        matchesKey(data, "ctrl+_") ||
+        data === CTRL_R ||
+        matchesKey(data, "ctrl+r");
+      const supportsCountedCharMotion =
+        CHAR_MOTION_KEYS.has(data) || data === ";" || data === ",";
+      const supportsCountedWordMotion =
+        data === "w" ||
+        data === "e" ||
+        data === "b" ||
+        data === "W" ||
+        data === "E" ||
+        data === "B";
       const supportsCountedParagraphMotion = data === "{" || data === "}";
-      const supportsCountedNav = (
-        data === "h"
-        || data === "j"
-        || data === "k"
-        || data === "l"
-      );
+      const supportsCountedNav =
+        data === "h" || data === "j" || data === "k" || data === "l";
       const supportsCountedUnderscore = data === "_";
 
       if (supportsCountedNav) {
@@ -1664,11 +1742,11 @@ export class ModalEditor extends CustomEditor {
       }
 
       if (
-        !supportsCountedStandaloneEdit
-        && !supportsCountedCharMotion
-        && !supportsCountedWordMotion
-        && !supportsCountedParagraphMotion
-        && !supportsCountedUnderscore
+        !supportsCountedStandaloneEdit &&
+        !supportsCountedCharMotion &&
+        !supportsCountedWordMotion &&
+        !supportsCountedParagraphMotion &&
+        !supportsCountedUnderscore
       ) {
         // Unsupported prefixed forms: drop count and keep processing this key.
         this.prefixCount = "";
@@ -1742,7 +1820,11 @@ export class ModalEditor extends CustomEditor {
     }
 
     if (data === ";" && this.lastCharMotion) {
-      this.executeCharMotion(this.lastCharMotion.motion, this.lastCharMotion.char, false);
+      this.executeCharMotion(
+        this.lastCharMotion.motion,
+        this.lastCharMotion.char,
+        false,
+      );
       return;
     }
     if (data === "," && this.lastCharMotion) {
@@ -1754,7 +1836,11 @@ export class ModalEditor extends CustomEditor {
       return;
     }
 
-    if (data === "u" || data === CTRL_UNDERSCORE || matchesKey(data, "ctrl+_")) {
+    if (
+      data === "u" ||
+      data === CTRL_UNDERSCORE ||
+      matchesKey(data, "ctrl+_")
+    ) {
       this.performUndo();
       return;
     }
@@ -1890,11 +1976,22 @@ export class ModalEditor extends CustomEditor {
     }
   }
 
-  private executeCharMotion(motion: CharMotion, targetChar: string, saveMotion: boolean = true): void {
+  private executeCharMotion(
+    motion: CharMotion,
+    targetChar: string,
+    saveMotion: boolean = true,
+  ): void {
     const line = this.getLines()[this.getCursor().line] ?? "";
     const col = this.getCursor().col;
     const count = this.takeTotalCount(1);
-    const targetCol = findCharMotionTarget(line, col, motion, targetChar, !saveMotion, count);
+    const targetCol = findCharMotionTarget(
+      line,
+      col,
+      motion,
+      targetChar,
+      !saveMotion,
+      count,
+    );
 
     if (targetCol !== null && saveMotion) {
       this.lastCharMotion = { motion, char: targetChar };
@@ -1909,7 +2006,12 @@ export class ModalEditor extends CustomEditor {
     const lines = this.getLines();
     const fromLine = this.getCursor().line;
     const count = this.takeTotalCount(1);
-    const targetLine = findParagraphMotionTarget(lines, fromLine, direction, count);
+    const targetLine = findParagraphMotionTarget(
+      lines,
+      fromLine,
+      direction,
+      count,
+    );
     this.moveCursorToLineStart(targetLine);
   }
 
@@ -1924,7 +2026,11 @@ export class ModalEditor extends CustomEditor {
 
     const state = editor.state;
     if (!state || !Array.isArray(state.lines)) return false;
-    if (!Number.isInteger(state.cursorLine) || !Number.isInteger(state.cursorCol)) return false;
+    if (
+      !Number.isInteger(state.cursorLine) ||
+      !Number.isInteger(state.cursorCol)
+    )
+      return false;
 
     const cursorLine = state.cursorLine as number;
     const cursorCol = state.cursorCol as number;
@@ -1974,7 +2080,10 @@ export class ModalEditor extends CustomEditor {
     }
 
     const currentLine = state.cursorLine ?? 0;
-    const targetLine = Math.max(0, Math.min(currentLine + delta, state.lines.length - 1));
+    const targetLine = Math.max(
+      0,
+      Math.min(currentLine + delta, state.lines.length - 1),
+    );
     if (targetLine === currentLine) return;
 
     const preferredCol = editor.preferredVisualCol ?? state.cursorCol ?? 0;
@@ -2078,9 +2187,12 @@ export class ModalEditor extends CustomEditor {
         if (normalize) {
           const trimmedRight = right.trimStart();
           const leftLastChar = left[left.length - 1];
-          const leftEndsWithSpace = leftLastChar !== undefined && /\s/.test(leftLastChar);
+          const leftEndsWithSpace =
+            leftLastChar !== undefined && /\s/.test(leftLastChar);
           const needsSeparator = !leftEndsWithSpace && trimmedRight.length > 0;
-          joined = needsSeparator ? `${left} ${trimmedRight}` : left + trimmedRight;
+          joined = needsSeparator
+            ? `${left} ${trimmedRight}`
+            : left + trimmedRight;
           joinPoint = left.length;
         } else {
           joined = left + right;
@@ -2174,25 +2286,43 @@ export class ModalEditor extends CustomEditor {
         } else if (target === "start") {
           const startType = this.charType(text[next], semanticClass);
           if (startType !== "space") {
-            while (next < len && this.charType(text[next], semanticClass) === startType) next++;
+            while (
+              next < len &&
+              this.charType(text[next], semanticClass) === startType
+            )
+              next++;
           }
-          while (next < len && this.charType(text[next], semanticClass) === "space") next++;
+          while (
+            next < len &&
+            this.charType(text[next], semanticClass) === "space"
+          )
+            next++;
         } else {
           if (next < len - 1) next++;
-          while (next < len && this.charType(text[next], semanticClass) === "space") next++;
+          while (
+            next < len &&
+            this.charType(text[next], semanticClass) === "space"
+          )
+            next++;
           if (next >= len) {
             next = len;
           } else {
             const t = this.charType(text[next], semanticClass);
-            while (next < len - 1 && this.charType(text[next + 1], semanticClass) === t) next++;
+            while (
+              next < len - 1 &&
+              this.charType(text[next + 1], semanticClass) === t
+            )
+              next++;
           }
         }
       } else {
         if (next >= len) next = len - 1;
         if (next > 0) next--;
-        while (next > 0 && this.charType(text[next], semanticClass) === "space") next--;
+        while (next > 0 && this.charType(text[next], semanticClass) === "space")
+          next--;
         const t = this.charType(text[next], semanticClass);
-        while (next > 0 && this.charType(text[next - 1], semanticClass) === t) next--;
+        while (next > 0 && this.charType(text[next - 1], semanticClass) === t)
+          next--;
       }
 
       if (next === i) break;
@@ -2281,7 +2411,11 @@ export class ModalEditor extends CustomEditor {
     semanticClass: WordMotionClass = "word",
   ): boolean {
     const col = this.getCursor().col;
-    const targetCol = this.tryFindWordTargetLineLocal(direction, target, semanticClass);
+    const targetCol = this.tryFindWordTargetLineLocal(
+      direction,
+      target,
+      semanticClass,
+    );
     if (targetCol === null || targetCol === col) return false;
 
     this.moveCursorToCol(targetCol);
@@ -2297,7 +2431,8 @@ export class ModalEditor extends CustomEditor {
     const lineIndex = cursor.line;
     const col = cursor.col;
     const lineSnapshot = this.getLines()[lineIndex] ?? "";
-    const direction: WordMotionDirection = motion === "b" ? "backward" : "forward";
+    const direction: WordMotionDirection =
+      motion === "b" ? "backward" : "forward";
     const target: WordMotionTarget = motion === "e" ? "end" : "start";
     const steps = Math.max(1, Math.min(MAX_COUNT, count));
 
@@ -2364,7 +2499,10 @@ export class ModalEditor extends CustomEditor {
     return true;
   }
 
-  private writeToRegister(text: string, source: RegisterWriteSource = "mutation"): void {
+  private writeToRegister(
+    text: string,
+    source: RegisterWriteSource = "mutation",
+  ): void {
     this.unnamedRegister = text;
     const shouldMirror = text !== "" && this.shouldMirrorRegisterWrite(source);
     this.preferRegisterForPut = text !== "" && !shouldMirror;
@@ -2380,7 +2518,9 @@ export class ModalEditor extends CustomEditor {
   }
 
   private hasMultiCodeUnitGraphemes(line: string): boolean {
-    return getLineGraphemes(line).some((segment) => segment.end - segment.start > 1);
+    return getLineGraphemes(line).some(
+      (segment) => segment.end - segment.start > 1,
+    );
   }
 
   private getGraphemeRangeAtCol(
@@ -2391,7 +2531,9 @@ export class ModalEditor extends CustomEditor {
   ): { start: number; end: number } | null {
     const clampedCol = Math.max(0, Math.min(col, line.length));
     const segments = getLineGraphemes(line);
-    const startIndex = segments.findIndex((segment) => clampedCol < segment.end);
+    const startIndex = segments.findIndex(
+      (segment) => clampedCol < segment.end,
+    );
     if (startIndex === -1) return null;
 
     let endIndex = startIndex + Math.max(1, count) - 1;
@@ -2432,7 +2574,8 @@ export class ModalEditor extends CustomEditor {
     const text = this.getText();
     this.writeToRegister(line.slice(range.start, range.end));
     this.replaceTextInBuffer(
-      text.slice(0, lineStartAbs + range.start) + text.slice(lineStartAbs + range.end),
+      text.slice(0, lineStartAbs + range.start) +
+        text.slice(lineStartAbs + range.end),
       lineStartAbs + range.start,
     );
   }
@@ -2443,7 +2586,8 @@ export class ModalEditor extends CustomEditor {
     const { line, col } = this.getCurrentLineAndCol();
 
     const hasNextLine = cursorLine < lines.length - 1;
-    const deleted = col < line.length ? line.slice(col) : hasNextLine ? "\n" : "";
+    const deleted =
+      col < line.length ? line.slice(col) : hasNextLine ? "\n" : "";
 
     this.writeToRegister(deleted);
     super.handleInput(CTRL_K);
@@ -2466,7 +2610,10 @@ export class ModalEditor extends CustomEditor {
     this.cutCurrentLineContent();
   }
 
-  private getNormalizedLineRange(startLine: number, endLine: number): { start: number; end: number } {
+  private getNormalizedLineRange(
+    startLine: number,
+    endLine: number,
+  ): { start: number; end: number } {
     const lines = this.getLines();
     const last = Math.max(0, lines.length - 1);
     const clampedStart = Math.max(0, Math.min(startLine, last));
@@ -2483,7 +2630,10 @@ export class ModalEditor extends CustomEditor {
     return `${lines.slice(start, end + 1).join("\n")}\n`;
   }
 
-  private getLineDeleteAbsoluteRange(startLine: number, endLine: number): { startAbs: number; endAbs: number } {
+  private getLineDeleteAbsoluteRange(
+    startLine: number,
+    endLine: number,
+  ): { startAbs: number; endAbs: number } {
     const lines = this.getLines();
     const text = this.getText();
     const { start, end } = this.getNormalizedLineRange(startLine, endLine);
@@ -2510,7 +2660,10 @@ export class ModalEditor extends CustomEditor {
     if (lines.length === 0) return;
 
     const payload = this.getLinewisePayload(startLine, endLine);
-    const { startAbs, endAbs } = this.getLineDeleteAbsoluteRange(startLine, endLine);
+    const { startAbs, endAbs } = this.getLineDeleteAbsoluteRange(
+      startLine,
+      endLine,
+    );
 
     this.writeToRegister(payload);
 
@@ -2563,7 +2716,11 @@ export class ModalEditor extends CustomEditor {
     }
 
     if (motion === "^") {
-      this.deleteRange(col, findFirstNonWhitespaceColumn(this.getLines()[cursor.line] ?? ""), false);
+      this.deleteRange(
+        col,
+        findFirstNonWhitespaceColumn(this.getLines()[cursor.line] ?? ""),
+        false,
+      );
       return true;
     }
 
@@ -2593,7 +2750,11 @@ export class ModalEditor extends CustomEditor {
         count,
         wordMotion.semanticClass,
       );
-      this.deleteRangeByAbsolute(currentAbs, targetAbs, wordMotion.motion === "e");
+      this.deleteRangeByAbsolute(
+        currentAbs,
+        targetAbs,
+        wordMotion.motion === "e",
+      );
       return true;
     }
 
@@ -2604,7 +2765,14 @@ export class ModalEditor extends CustomEditor {
     const line = this.getLines()[this.getCursor().line] ?? "";
     const col = this.getCursor().col;
     const count = this.takeTotalCount(1);
-    const targetCol = findCharMotionTarget(line, col, motion, targetChar, false, count);
+    const targetCol = findCharMotionTarget(
+      line,
+      col,
+      motion,
+      targetChar,
+      false,
+      count,
+    );
 
     if (targetCol === null) return;
 
@@ -2633,7 +2801,8 @@ export class ModalEditor extends CustomEditor {
     }
 
     if (data === "j" || data === "k") {
-      const hasDualCount = this.prefixCount.length > 0 && this.operatorCount.length > 0;
+      const hasDualCount =
+        this.prefixCount.length > 0 && this.operatorCount.length > 0;
       const count = this.takeTotalCount(1);
       const delta = hasDualCount ? Math.max(0, count - 1) : count;
       this.yankLinewiseByDelta(data === "j" ? delta : -delta);
@@ -2728,7 +2897,11 @@ export class ModalEditor extends CustomEditor {
         1,
         wordMotion.semanticClass,
       );
-      this.yankRangeByAbsolute(currentAbs, targetAbs, wordMotion.motion === "e");
+      this.yankRangeByAbsolute(
+        currentAbs,
+        targetAbs,
+        wordMotion.motion === "e",
+      );
       return true;
     }
 
@@ -2739,7 +2912,14 @@ export class ModalEditor extends CustomEditor {
     const line = this.getLines()[this.getCursor().line] ?? "";
     const col = this.getCursor().col;
     const count = this.takeTotalCount(1);
-    const targetCol = findCharMotionTarget(line, col, motion, targetChar, false, count);
+    const targetCol = findCharMotionTarget(
+      line,
+      col,
+      motion,
+      targetChar,
+      false,
+      count,
+    );
 
     if (targetCol === null) return;
 
@@ -2754,7 +2934,11 @@ export class ModalEditor extends CustomEditor {
     let end = Math.min(rawEnd, line.length);
 
     if (inclusive) {
-      const targetRange = this.getGraphemeRangeAtCol(line, Math.max(col, targetCol), 1);
+      const targetRange = this.getGraphemeRangeAtCol(
+        line,
+        Math.max(col, targetCol),
+        1,
+      );
       end = targetRange?.end ?? end;
     }
 
@@ -2764,7 +2948,11 @@ export class ModalEditor extends CustomEditor {
     this.writeToRegister(line.slice(start, end), "yank");
   }
 
-  private yankRangeByAbsolute(currentAbs: number, targetAbs: number, inclusive: boolean = false): void {
+  private yankRangeByAbsolute(
+    currentAbs: number,
+    targetAbs: number,
+    inclusive: boolean = false,
+  ): void {
     const text = this.getText();
     const start = Math.min(currentAbs, targetAbs);
     const rawEnd = Math.max(currentAbs, targetAbs) + (inclusive ? 1 : 0);
@@ -2773,7 +2961,10 @@ export class ModalEditor extends CustomEditor {
     this.writeToRegister(text.slice(start, end), "yank");
   }
 
-  private getCursorFromAbsoluteIndex(text: string, abs: number): { line: number; col: number } {
+  private getCursorFromAbsoluteIndex(
+    text: string,
+    abs: number,
+  ): { line: number; col: number } {
     const lines = text.length === 0 ? [""] : text.split("\n");
     let remaining = Math.max(0, Math.min(abs, text.length));
     for (let lineIndex = 0; lineIndex < lines.length; lineIndex++) {
@@ -2814,7 +3005,11 @@ export class ModalEditor extends CustomEditor {
     editor.tui?.requestRender?.();
   }
 
-  private deleteRangeByAbsolute(currentAbs: number, targetAbs: number, inclusive: boolean = false): void {
+  private deleteRangeByAbsolute(
+    currentAbs: number,
+    targetAbs: number,
+    inclusive: boolean = false,
+  ): void {
     const text = this.getText();
     const start = Math.min(currentAbs, targetAbs);
     const rawEnd = Math.max(currentAbs, targetAbs) + (inclusive ? 1 : 0);
@@ -2866,7 +3061,10 @@ export class ModalEditor extends CustomEditor {
     const count = this.takeTotalCount(1);
     const text = this.getPasteRegisterText();
     if (!text) return;
-    const safeCount = Math.min(count, Math.max(1, Math.floor(ModalEditor.PUT_SIZE_LIMIT / text.length)));
+    const safeCount = Math.min(
+      count,
+      Math.max(1, Math.floor(ModalEditor.PUT_SIZE_LIMIT / text.length)),
+    );
 
     if (text.endsWith("\n")) {
       const content = text.slice(0, -1);
@@ -2896,7 +3094,10 @@ export class ModalEditor extends CustomEditor {
     const count = this.takeTotalCount(1);
     const text = this.getPasteRegisterText();
     if (!text) return;
-    const safeCount = Math.min(count, Math.max(1, Math.floor(ModalEditor.PUT_SIZE_LIMIT / text.length)));
+    const safeCount = Math.min(
+      count,
+      Math.max(1, Math.floor(ModalEditor.PUT_SIZE_LIMIT / text.length)),
+    );
 
     if (text.endsWith("\n")) {
       const content = text.slice(0, -1);
@@ -2920,7 +3121,11 @@ export class ModalEditor extends CustomEditor {
     }
   }
 
-  private deleteRange(col: number, targetCol: number, inclusive: boolean): void {
+  private deleteRange(
+    col: number,
+    targetCol: number,
+    inclusive: boolean,
+  ): void {
     const cursor = this.getCursor();
     const line = this.getLines()[cursor.line] ?? "";
     const lineStartAbs = this.getAbsoluteIndex(cursor.line, 0);
@@ -2929,7 +3134,11 @@ export class ModalEditor extends CustomEditor {
     let end = Math.min(rawEnd, line.length);
 
     if (inclusive) {
-      const targetRange = this.getGraphemeRangeAtCol(line, Math.max(col, targetCol), 1);
+      const targetRange = this.getGraphemeRangeAtCol(
+        line,
+        Math.max(col, targetCol),
+        1,
+      );
       end = targetRange?.end ?? end;
     }
 
@@ -3026,7 +3235,8 @@ export class ModalEditor extends CustomEditor {
     const last = lines.length - 1;
     const lastLine = lines[last];
     if (lastLine && visibleWidth(lastLine) >= visibleWidth(rawLabel)) {
-      lines[last] = truncateToWidth(lastLine, width - visibleWidth(rawLabel), "") + label;
+      lines[last] =
+        truncateToWidth(lastLine, width - visibleWidth(rawLabel), "") + label;
     } else {
       lines[last] = label;
     }
@@ -3036,7 +3246,9 @@ export class ModalEditor extends CustomEditor {
   private getModeLabelColorizer(): ((s: string) => string) | null {
     if (!this.labelColorizers) return null;
     if (this.pendingExCommand !== null) return this.labelColorizers.ex;
-    return this.mode === "insert" ? this.labelColorizers.insert : this.labelColorizers.normal;
+    return this.mode === "insert"
+      ? this.labelColorizers.insert
+      : this.labelColorizers.normal;
   }
 
   private getModeLabel(): string {
@@ -3073,18 +3285,22 @@ export default function (pi: ExtensionAPI) {
 
   pi.on("session_start", (_event, ctx) => {
     const piVimSettings = readPiVimSettings(ctx.cwd);
-    const clipboardMirrorPolicy = resolveClipboardMirrorPolicy(piVimSettings.clipboardMirror);
+    const clipboardMirrorPolicy = resolveClipboardMirrorPolicy(
+      piVimSettings.clipboardMirror,
+    );
     if (clipboardMirrorPolicy.warning && ctx.hasUI) {
       ctx.ui.notify(clipboardMirrorPolicy.warning, "warning");
     }
 
     const t = ctx.ui.theme;
     const reverseVideo = (s: string) => `\x1b[7m${s}\x1b[27m`;
-    const colorizers = t ? {
-      insert: (s: string) => t.fg("borderMuted", reverseVideo(s)),
-      normal: (s: string) => t.fg("borderAccent", reverseVideo(s)),
-      ex: (s: string) => t.fg("warning", reverseVideo(s)),
-    } : null;
+    const colorizers = t
+      ? {
+          insert: (s: string) => t.fg("borderMuted", reverseVideo(s)),
+          normal: (s: string) => t.fg("borderAccent", reverseVideo(s)),
+          ex: (s: string) => t.fg("warning", reverseVideo(s)),
+        }
+      : null;
     ctx.ui.setEditorComponent((tui, theme, kb) => {
       cursorShapeCleanup = enableCursorShapeSupport(tui);
       const editor = new ModalEditor(tui, theme, kb, colorizers);

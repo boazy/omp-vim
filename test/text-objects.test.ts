@@ -1,5 +1,5 @@
-import { describe, it } from "node:test";
 import assert from "node:assert/strict";
+import { describe, it } from "node:test";
 import {
   isEscapedDelimiter,
   normalizeDelimiterKey,
@@ -49,10 +49,13 @@ describe("resolveWordTextObjectRange", () => {
   });
 
   it("uses contiguous non-whitespace runs for WORD semantics", () => {
-    assert.deepEqual(resolveWordTextObjectRange("path/to-file", 0, 5, "i", 1, "WORD"), {
-      startAbs: 0,
-      endAbs: 12,
-    });
+    assert.deepEqual(
+      resolveWordTextObjectRange("path/to-file", 0, 5, "i", 1, "WORD"),
+      {
+        startAbs: 0,
+        endAbs: 12,
+      },
+    );
   });
 
   it("does not cross newline boundaries", () => {
@@ -70,10 +73,10 @@ describe("resolveWordTextObjectRange", () => {
 
 describe("normalizeDelimiterKey", () => {
   it("normalizes quote delimiter keys", () => {
-    assert.deepEqual(normalizeDelimiterKey("\""), {
+    assert.deepEqual(normalizeDelimiterKey('"'), {
       type: "quote",
-      open: "\"",
-      close: "\"",
+      open: '"',
+      close: '"',
     });
     assert.deepEqual(normalizeDelimiterKey("'"), {
       type: "quote",
@@ -100,11 +103,15 @@ describe("normalizeDelimiterKey", () => {
     ];
 
     for (const bracketCase of cases) {
-      assert.deepEqual(normalizeDelimiterKey(bracketCase.key), {
-        type: "bracket",
-        open: bracketCase.open,
-        close: bracketCase.close,
-      }, bracketCase.key);
+      assert.deepEqual(
+        normalizeDelimiterKey(bracketCase.key),
+        {
+          type: "bracket",
+          open: bracketCase.open,
+          close: bracketCase.close,
+        },
+        bracketCase.key,
+      );
     }
   });
 
@@ -119,7 +126,7 @@ describe("resolveQuoteObjectRange", () => {
     {
       name: "double quotes",
       text: 'say "hello" now',
-      quote: "\"",
+      quote: '"',
       cursorAbs: 6,
       inner: { startAbs: 5, endAbs: 10 },
       around: { startAbs: 4, endAbs: 11 },
@@ -145,11 +152,21 @@ describe("resolveQuoteObjectRange", () => {
   for (const quoteCase of cases) {
     it(`resolves inside and around ${quoteCase.name}`, () => {
       assert.deepEqual(
-        resolveQuoteObjectRange(quoteCase.text, quoteCase.cursorAbs, "i", quoteCase.quote),
+        resolveQuoteObjectRange(
+          quoteCase.text,
+          quoteCase.cursorAbs,
+          "i",
+          quoteCase.quote,
+        ),
         quoteCase.inner,
       );
       assert.deepEqual(
-        resolveDelimitedTextObjectRange(quoteCase.text, quoteCase.cursorAbs, "a", quoteCase.quote),
+        resolveDelimitedTextObjectRange(
+          quoteCase.text,
+          quoteCase.cursorAbs,
+          "a",
+          quoteCase.quote,
+        ),
         quoteCase.around,
       );
     });
@@ -158,11 +175,11 @@ describe("resolveQuoteObjectRange", () => {
   it("counts the cursor on either quote delimiter as contained", () => {
     const text = 'say "hello" now';
 
-    assert.deepEqual(resolveDelimitedTextObjectRange(text, 4, "i", "\""), {
+    assert.deepEqual(resolveDelimitedTextObjectRange(text, 4, "i", '"'), {
       startAbs: 5,
       endAbs: 10,
     });
-    assert.deepEqual(resolveDelimitedTextObjectRange(text, 10, "a", "\""), {
+    assert.deepEqual(resolveDelimitedTextObjectRange(text, 10, "a", '"'), {
       startAbs: 4,
       endAbs: 11,
     });
@@ -171,13 +188,13 @@ describe("resolveQuoteObjectRange", () => {
   it("ignores escaped quotes with an odd number of preceding backslashes", () => {
     const text = String.raw`\"skip\" "yes"`;
 
-    assert.equal(text[1], "\"");
-    assert.equal(text[7], "\"");
-    assert.equal(text[9], "\"");
-    assert.equal(text[13], "\"");
+    assert.equal(text[1], '"');
+    assert.equal(text[7], '"');
+    assert.equal(text[9], '"');
+    assert.equal(text[13], '"');
     assert.equal(isEscapedDelimiter(text, 1), true);
     assert.equal(isEscapedDelimiter(text, 7), true);
-    assert.deepEqual(resolveDelimitedTextObjectRange(text, 10, "i", "\""), {
+    assert.deepEqual(resolveDelimitedTextObjectRange(text, 10, "i", '"'), {
       startAbs: 10,
       endAbs: 13,
     });
@@ -203,7 +220,7 @@ describe("resolveQuoteObjectRange", () => {
     ];
 
     for (const quoteCase of cases) {
-      const firstQuote = quoteCase.text.indexOf("\"");
+      const firstQuote = quoteCase.text.indexOf('"');
       const startAbs = quoteCase.text.indexOf("yes");
 
       assert.notEqual(firstQuote, -1, `${quoteCase.name} first quote`);
@@ -214,7 +231,7 @@ describe("resolveQuoteObjectRange", () => {
         quoteCase.name,
       );
       assert.deepEqual(
-        resolveDelimitedTextObjectRange(quoteCase.text, startAbs, "i", "\""),
+        resolveDelimitedTextObjectRange(quoteCase.text, startAbs, "i", '"'),
         {
           startAbs,
           endAbs: startAbs + "yes".length,
@@ -227,8 +244,8 @@ describe("resolveQuoteObjectRange", () => {
   it("does not cross newline boundaries", () => {
     const text = '"one\n"two"';
 
-    assert.equal(resolveDelimitedTextObjectRange(text, 2, "i", "\""), null);
-    assert.deepEqual(resolveDelimitedTextObjectRange(text, 6, "i", "\""), {
+    assert.equal(resolveDelimitedTextObjectRange(text, 2, "i", '"'), null);
+    assert.deepEqual(resolveDelimitedTextObjectRange(text, 6, "i", '"'), {
       startAbs: 6,
       endAbs: 9,
     });
@@ -237,11 +254,11 @@ describe("resolveQuoteObjectRange", () => {
   it("returns an empty inner range for empty quotes", () => {
     const text = 'say "" now';
 
-    assert.deepEqual(resolveDelimitedTextObjectRange(text, 4, "i", "\""), {
+    assert.deepEqual(resolveDelimitedTextObjectRange(text, 4, "i", '"'), {
       startAbs: 5,
       endAbs: 5,
     });
-    assert.deepEqual(resolveDelimitedTextObjectRange(text, 5, "a", "\""), {
+    assert.deepEqual(resolveDelimitedTextObjectRange(text, 5, "a", '"'), {
       startAbs: 4,
       endAbs: 6,
     });
@@ -306,24 +323,33 @@ describe("resolveBracketObjectRange", () => {
     const innerPairStart = target.indexOf("{inner}");
     const cursorAbs = targetStartAbs + target.indexOf("inner");
 
-    assert.deepEqual(resolveDelimitedTextObjectRange(text, cursorAbs, "a", "{"), {
-      startAbs: targetStartAbs + innerPairStart,
-      endAbs: targetStartAbs + innerPairStart + "{inner}".length,
-    });
+    assert.deepEqual(
+      resolveDelimitedTextObjectRange(text, cursorAbs, "a", "{"),
+      {
+        startAbs: targetStartAbs + innerPairStart,
+        endAbs: targetStartAbs + innerPairStart + "{inner}".length,
+      },
+    );
   });
 
   it("keeps mixed-bracket matching lexical for the selected delimiter type", () => {
     const text = "outer { [ value } still ]";
     const cursorAbs = text.indexOf("value");
 
-    assert.deepEqual(resolveDelimitedTextObjectRange(text, cursorAbs, "a", "{"), {
-      startAbs: text.indexOf("{"),
-      endAbs: text.indexOf("}") + 1,
-    });
-    assert.deepEqual(resolveDelimitedTextObjectRange(text, cursorAbs, "a", "["), {
-      startAbs: text.indexOf("["),
-      endAbs: text.indexOf("]") + 1,
-    });
+    assert.deepEqual(
+      resolveDelimitedTextObjectRange(text, cursorAbs, "a", "{"),
+      {
+        startAbs: text.indexOf("{"),
+        endAbs: text.indexOf("}") + 1,
+      },
+    );
+    assert.deepEqual(
+      resolveDelimitedTextObjectRange(text, cursorAbs, "a", "["),
+      {
+        startAbs: text.indexOf("["),
+        endAbs: text.indexOf("]") + 1,
+      },
+    );
   });
 
   it("returns an empty inner range for empty brackets", () => {
@@ -340,7 +366,13 @@ describe("resolveBracketObjectRange", () => {
   });
 
   it("returns null for unmatched brackets", () => {
-    assert.equal(resolveDelimitedTextObjectRange("call(foo", 5, "i", "("), null);
-    assert.equal(resolveDelimitedTextObjectRange("call(foo)", 5, "i", "["), null);
+    assert.equal(
+      resolveDelimitedTextObjectRange("call(foo", 5, "i", "("),
+      null,
+    );
+    assert.equal(
+      resolveDelimitedTextObjectRange("call(foo)", 5, "i", "["),
+      null,
+    );
   });
 });

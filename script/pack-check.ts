@@ -48,7 +48,10 @@ const FORBIDDEN_GLOBS = [
   "**/report*.md",
 ] as const;
 
-const FORBIDDEN_REGEX_BY_GLOB: Record<(typeof FORBIDDEN_GLOBS)[number], RegExp> = {
+const FORBIDDEN_REGEX_BY_GLOB: Record<
+  (typeof FORBIDDEN_GLOBS)[number],
+  RegExp
+> = {
   "doc/**": /^doc\//,
   "test/**": /^test\//,
   ".pi/**": /^\.pi\//,
@@ -61,10 +64,10 @@ const FORBIDDEN_REGEX_BY_GLOB: Record<(typeof FORBIDDEN_GLOBS)[number], RegExp> 
 
 const THRESHOLDS = {
   maxFiles: 12,
-  // WORD/delimited text objects add a packaged resolver module plus README surface.
+  // WORD/delimited text objects plus formatted source add packaged surface.
   // Keep budgets tight enough to catch accidental docs/tests in the package.
   maxSize: 31000,
-  maxUnpackedSize: 136000,
+  maxUnpackedSize: 139000,
 } as const;
 
 function compareStrings(a: string, b: string): number {
@@ -95,11 +98,15 @@ function runPackDryRun(): PackResult {
   try {
     parsed = JSON.parse(rawOutput);
   } catch (error) {
-    throw new Error(`Failed to parse npm pack JSON output: ${formatError(error)}`);
+    throw new Error(
+      `Failed to parse npm pack JSON output: ${formatError(error)}`,
+    );
   }
 
   if (!Array.isArray(parsed) || parsed.length === 0) {
-    throw new Error("npm pack --dry-run --json returned an unexpected JSON shape (expected non-empty array)");
+    throw new Error(
+      "npm pack --dry-run --json returned an unexpected JSON shape (expected non-empty array)",
+    );
   }
 
   const firstResult = parsed[0];
@@ -112,20 +119,32 @@ function runPackDryRun(): PackResult {
   const unpackedSize = firstResult.unpackedSize;
 
   if (!Array.isArray(files)) {
-    throw new Error("npm pack --dry-run --json is missing required field: files[]");
+    throw new Error(
+      "npm pack --dry-run --json is missing required field: files[]",
+    );
   }
 
   if (typeof size !== "number" || !Number.isFinite(size)) {
-    throw new Error("npm pack --dry-run --json is missing required numeric field: size");
+    throw new Error(
+      "npm pack --dry-run --json is missing required numeric field: size",
+    );
   }
 
   if (typeof unpackedSize !== "number" || !Number.isFinite(unpackedSize)) {
-    throw new Error("npm pack --dry-run --json is missing required numeric field: unpackedSize");
+    throw new Error(
+      "npm pack --dry-run --json is missing required numeric field: unpackedSize",
+    );
   }
 
   const packFiles = files.map((entry, index) => {
-    if (!isObject(entry) || typeof entry.path !== "string" || entry.path.length === 0) {
-      throw new Error(`npm pack --dry-run --json files[${index}] is missing string field: path`);
+    if (
+      !isObject(entry) ||
+      typeof entry.path !== "string" ||
+      entry.path.length === 0
+    ) {
+      throw new Error(
+        `npm pack --dry-run --json files[${index}] is missing string field: path`,
+      );
     }
 
     return { path: entry.path } satisfies PackFile;
@@ -149,11 +168,15 @@ function normalizePath(pathValue: string): string {
   const normalized = posix.normalize(withoutLeadingDot);
 
   if (normalized.length === 0 || normalized === ".") {
-    throw new Error(`Invalid empty pack path after normalization: ${pathValue}`);
+    throw new Error(
+      `Invalid empty pack path after normalization: ${pathValue}`,
+    );
   }
 
   if (posix.isAbsolute(normalized)) {
-    throw new Error(`Pack path must be relative, got absolute path: ${pathValue}`);
+    throw new Error(
+      `Pack path must be relative, got absolute path: ${pathValue}`,
+    );
   }
 
   if (normalized === ".." || normalized.startsWith("../")) {
@@ -164,25 +187,24 @@ function normalizePath(pathValue: string): string {
 }
 
 function normalizePaths(files: PackFile[]): string[] {
-  return files
-    .map((file) => normalizePath(file.path))
-    .sort(compareStrings);
+  return files.map((file) => normalizePath(file.path)).sort(compareStrings);
 }
 
 function checkRequired(paths: string[]): string[] {
   const pathSet = new Set(paths);
 
-  return REQUIRED_FILES
-    .filter((requiredPath) => !pathSet.has(requiredPath))
-    .sort(compareStrings);
+  return REQUIRED_FILES.filter(
+    (requiredPath) => !pathSet.has(requiredPath),
+  ).sort(compareStrings);
 }
 
 function matchForbidden(paths: string[]): ForbiddenMatch[] {
   const matches: ForbiddenMatch[] = [];
 
   for (const path of paths) {
-    const globs = FORBIDDEN_GLOBS
-      .filter((glob) => FORBIDDEN_REGEX_BY_GLOB[glob].test(path));
+    const globs = FORBIDDEN_GLOBS.filter((glob) =>
+      FORBIDDEN_REGEX_BY_GLOB[glob].test(path),
+    );
 
     if (globs.length > 0) {
       matches.push({ path, globs });
@@ -196,7 +218,9 @@ function checkThresholds(result: PackResult): string[] {
   const violations: string[] = [];
 
   if (result.files.length > THRESHOLDS.maxFiles) {
-    violations.push(`files.length ${result.files.length} > ${THRESHOLDS.maxFiles}`);
+    violations.push(
+      `files.length ${result.files.length} > ${THRESHOLDS.maxFiles}`,
+    );
   }
 
   if (result.size > THRESHOLDS.maxSize) {
@@ -204,7 +228,9 @@ function checkThresholds(result: PackResult): string[] {
   }
 
   if (result.unpackedSize > THRESHOLDS.maxUnpackedSize) {
-    violations.push(`unpackedSize ${result.unpackedSize} > ${THRESHOLDS.maxUnpackedSize}`);
+    violations.push(
+      `unpackedSize ${result.unpackedSize} > ${THRESHOLDS.maxUnpackedSize}`,
+    );
   }
 
   return violations;
@@ -223,12 +249,16 @@ function checkDeterminism(): DeterminismResult {
   const secondPaths = normalizePaths(secondRun.files);
 
   const sameLength = firstPaths.length === secondPaths.length;
-  const sameEntries = sameLength && firstPaths.every((path, index) => path === secondPaths[index]);
+  const sameEntries =
+    sameLength &&
+    firstPaths.every((path, index) => path === secondPaths[index]);
 
   if (sameEntries) {
     return {
       passed: true,
-      details: [`Stable file set across two consecutive dry-runs (${firstPaths.length} files)`],
+      details: [
+        `Stable file set across two consecutive dry-runs (${firstPaths.length} files)`,
+      ],
     };
   }
 
@@ -251,7 +281,11 @@ function checkDeterminism(): DeterminismResult {
   };
 }
 
-function printSummary(result: PackResult, paths: string[], summaries: CheckSummary[]): void {
+function printSummary(
+  result: PackResult,
+  paths: string[],
+  summaries: CheckSummary[],
+): void {
   console.log("pack:check summary");
   console.log(`- files: ${paths.length}`);
   console.log(`- size: ${result.size} bytes`);
@@ -288,31 +322,36 @@ function main(): void {
     summaries.push({
       name: "required files",
       passed: missingRequired.length === 0,
-      details: missingRequired.length === 0
-        ? [`All required files present (${REQUIRED_FILES.length})`]
-        : missingRequired.map((path) => `Missing required file: ${path}`),
+      details:
+        missingRequired.length === 0
+          ? [`All required files present (${REQUIRED_FILES.length})`]
+          : missingRequired.map((path) => `Missing required file: ${path}`),
     });
 
     const forbiddenMatches = matchForbidden(normalizedPaths);
     summaries.push({
       name: "forbidden globs",
       passed: forbiddenMatches.length === 0,
-      details: forbiddenMatches.length === 0
-        ? ["No forbidden file paths matched"]
-        : forbiddenMatches.map((match) => `${match.path} matches ${match.globs.join(", ")}`),
+      details:
+        forbiddenMatches.length === 0
+          ? ["No forbidden file paths matched"]
+          : forbiddenMatches.map(
+              (match) => `${match.path} matches ${match.globs.join(", ")}`,
+            ),
     });
 
     const thresholdViolations = checkThresholds(packResult);
     summaries.push({
       name: "size thresholds",
       passed: thresholdViolations.length === 0,
-      details: thresholdViolations.length === 0
-        ? [
-          `files.length ${packResult.files.length} <= ${THRESHOLDS.maxFiles}`,
-          `size ${packResult.size} <= ${THRESHOLDS.maxSize}`,
-          `unpackedSize ${packResult.unpackedSize} <= ${THRESHOLDS.maxUnpackedSize}`,
-        ]
-        : thresholdViolations,
+      details:
+        thresholdViolations.length === 0
+          ? [
+              `files.length ${packResult.files.length} <= ${THRESHOLDS.maxFiles}`,
+              `size ${packResult.size} <= ${THRESHOLDS.maxSize}`,
+              `unpackedSize ${packResult.unpackedSize} <= ${THRESHOLDS.maxUnpackedSize}`,
+            ]
+          : thresholdViolations,
     });
 
     printSummary(packResult, normalizedPaths, summaries);
@@ -320,7 +359,9 @@ function main(): void {
     const failedChecks = summaries.filter((summary) => !summary.passed);
 
     if (failedChecks.length > 0) {
-      console.error(`pack:check failed (${failedChecks.length} check${failedChecks.length === 1 ? "" : "s"})`);
+      console.error(
+        `pack:check failed (${failedChecks.length} check${failedChecks.length === 1 ? "" : "s"})`,
+      );
       process.exit(1);
     }
 

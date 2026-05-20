@@ -6,15 +6,18 @@
  * blocks where state inspection requires nuance.
  */
 
+import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import { describe, it } from "node:test";
-import assert from "node:assert/strict";
 import { CURSOR_MARKER, visibleWidth } from "@mariozechner/pi-tui";
-import type { WordMotionClass } from "../motions.js";
-import type { WordMotionDirection, WordMotionTarget } from "../word-boundary-cache.js";
-import installPiVim, { ModalEditor } from "../index.js";
 import { setPiVimSettingsReaderForTests } from "../clipboard-policy.js";
+import installPiVim, { ModalEditor } from "../index.js";
+import type { WordMotionClass } from "../motions.js";
+import type {
+  WordMotionDirection,
+  WordMotionTarget,
+} from "../word-boundary-cache.js";
 import {
   createCursorShapeTui,
   createEditorWithSpy,
@@ -59,8 +62,12 @@ type ModalEditorTestInternals = {
   pushUndoSnapshot?: (() => void) | undefined;
 };
 
-type FindWordTargetInTextArgs = Parameters<ModalEditorTestInternals["findWordTargetInText"]>;
-type TryFindTargetArgs = Parameters<ModalEditorWordBoundaryCacheInternals["tryFindTarget"]>;
+type FindWordTargetInTextArgs = Parameters<
+  ModalEditorTestInternals["findWordTargetInText"]
+>;
+type TryFindTargetArgs = Parameters<
+  ModalEditorWordBoundaryCacheInternals["tryFindTarget"]
+>;
 
 type EditorFactory = (
   tui: ConstructorParameters<typeof ModalEditor>[0],
@@ -136,21 +143,42 @@ type DecoratedCall =
   | { method: "handleInput"; data: string }
   | { method: "setText"; text: string };
 
-function assertWrapperFacingSurface(editor: ModalEditor): asserts editor is WrapperFacingEditor {
+function assertWrapperFacingSurface(
+  editor: ModalEditor,
+): asserts editor is WrapperFacingEditor {
   const candidate = editor as WrapperFacingEditor;
 
   for (const method of WRAPPER_FACING_METHODS) {
-    assert.equal(typeof candidate[method], "function", `${method} should be a function`);
+    assert.equal(
+      typeof candidate[method],
+      "function",
+      `${method} should be a function`,
+    );
   }
 
   for (const field of WRAPPER_FACING_FIELDS) {
     assert.ok(field in candidate, `${field} should exist`);
   }
 
-  assert.ok(candidate.actionHandlers instanceof Map, "actionHandlers should be a Map");
-  assert.equal(typeof candidate.focused, "boolean", "focused should be a boolean");
-  assert.equal(typeof candidate.disableSubmit, "boolean", "disableSubmit should be a boolean");
-  assert.equal(typeof candidate.borderColor, "function", "borderColor should be a function");
+  assert.ok(
+    candidate.actionHandlers instanceof Map,
+    "actionHandlers should be a Map",
+  );
+  assert.equal(
+    typeof candidate.focused,
+    "boolean",
+    "focused should be a boolean",
+  );
+  assert.equal(
+    typeof candidate.disableSubmit,
+    "boolean",
+    "disableSubmit should be a boolean",
+  );
+  assert.equal(
+    typeof candidate.borderColor,
+    "function",
+    "borderColor should be a function",
+  );
 }
 
 function decorateLikeImageAttachments(editor: ModalEditor): DecoratedCall[] {
@@ -192,7 +220,11 @@ function assertNoCursorShapeSequences(lines: string[]): void {
   }
 }
 
-function setInternalCursor(editor: ModalEditor, cursorCol: number, cursorLine: number = 0): void {
+function setInternalCursor(
+  editor: ModalEditor,
+  cursorCol: number,
+  cursorLine: number = 0,
+): void {
   const internal = editor as unknown as {
     state?: { cursorLine?: number; cursorCol?: number };
     preferredVisualCol?: number | null;
@@ -302,7 +334,11 @@ function nextImmediate(): Promise<void> {
   return new Promise<void>((resolve) => setImmediate(resolve));
 }
 
-function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> {
+function withTimeout<T>(
+  promise: Promise<T>,
+  timeoutMs: number,
+  message: string,
+): Promise<T> {
   let timeoutId: ReturnType<typeof setTimeout> | undefined;
   const timeout = new Promise<never>((_, reject) => {
     timeoutId = setTimeout(() => reject(new Error(message)), timeoutMs);
@@ -324,9 +360,16 @@ type HelperRunResult = {
 
 const CLIPBOARD_HELPER_TEST_TIMEOUT_MS = 5_000;
 
-async function getClipboardHelperSourceWithMock(mockModuleSource: string): Promise<string> {
-  const indexSource = await readFile(new URL("../index.ts", import.meta.url), "utf8");
-  const match = /const CLIPBOARD_HELPER_SOURCE = `([\s\S]*?)`;/.exec(indexSource);
+async function getClipboardHelperSourceWithMock(
+  mockModuleSource: string,
+): Promise<string> {
+  const indexSource = await readFile(
+    new URL("../index.ts", import.meta.url),
+    "utf8",
+  );
+  const match = /const CLIPBOARD_HELPER_SOURCE = `([\s\S]*?)`;/.exec(
+    indexSource,
+  );
 
   assert.ok(match, "CLIPBOARD_HELPER_SOURCE not found");
   assert.ok(match[1], "CLIPBOARD_HELPER_SOURCE was empty");
@@ -340,20 +383,46 @@ async function getClipboardHelperSourceWithMock(mockModuleSource: string): Promi
   const replacementImportLine = `import { copyToClipboard } from ${JSON.stringify(mockModuleUrl)};`;
   const helperSource = match[1];
 
-  assert.equal(helperSource.includes(helperImportLine), true, "clipboard helper import not found");
+  assert.equal(
+    helperSource.includes(helperImportLine),
+    true,
+    "clipboard helper import not found",
+  );
 
-  const mockedSource = helperSource.replace(helperImportLine, replacementImportLine);
+  const mockedSource = helperSource.replace(
+    helperImportLine,
+    replacementImportLine,
+  );
 
-  assert.notEqual(mockedSource, helperSource, "clipboard helper import was not replaced");
-  assert.equal(mockedSource.includes(helperImportLine), false, "real clipboard helper import remains");
-  assert.equal(mockedSource.includes(replacementImportLine), true, "mock clipboard import missing");
+  assert.notEqual(
+    mockedSource,
+    helperSource,
+    "clipboard helper import was not replaced",
+  );
+  assert.equal(
+    mockedSource.includes(helperImportLine),
+    false,
+    "real clipboard helper import remains",
+  );
+  assert.equal(
+    mockedSource.includes(replacementImportLine),
+    true,
+    "mock clipboard import missing",
+  );
 
   return mockedSource;
 }
 
-async function getClipboardReadHelperSourceWithMock(mockClipboardExpression: string): Promise<string> {
-  const indexSource = await readFile(new URL("../index.ts", import.meta.url), "utf8");
-  const match = /const CLIPBOARD_READ_HELPER_SOURCE = `([\s\S]*?)`;/.exec(indexSource);
+async function getClipboardReadHelperSourceWithMock(
+  mockClipboardExpression: string,
+): Promise<string> {
+  const indexSource = await readFile(
+    new URL("../index.ts", import.meta.url),
+    "utf8",
+  );
+  const match = /const CLIPBOARD_READ_HELPER_SOURCE = `([\s\S]*?)`;/.exec(
+    indexSource,
+  );
 
   assert.ok(match, "CLIPBOARD_READ_HELPER_SOURCE not found");
   assert.ok(match[1], "CLIPBOARD_READ_HELPER_SOURCE was empty");
@@ -366,20 +435,42 @@ async function getClipboardReadHelperSourceWithMock(mockClipboardExpression: str
   const clipboardLine = 'const clipboard = require("@mariozechner/clipboard");';
   const replacement = `const clipboard = ${mockClipboardExpression};`;
   const helperSource = match[1];
-  const mockedSource = helperSource.replace(`${requireLine}\n${clipboardLine}`, replacement);
+  const mockedSource = helperSource.replace(
+    `${requireLine}\n${clipboardLine}`,
+    replacement,
+  );
 
-  assert.notEqual(mockedSource, helperSource, "clipboard read helper require was not replaced");
-  assert.equal(mockedSource.includes(clipboardLine), false, "real clipboard read helper require remains");
-  assert.equal(mockedSource.includes(replacement), true, "mock clipboard object missing");
+  assert.notEqual(
+    mockedSource,
+    helperSource,
+    "clipboard read helper require was not replaced",
+  );
+  assert.equal(
+    mockedSource.includes(clipboardLine),
+    false,
+    "real clipboard read helper require remains",
+  );
+  assert.equal(
+    mockedSource.includes(replacement),
+    true,
+    "mock clipboard object missing",
+  );
 
   return mockedSource;
 }
 
-function runClipboardHelperSource(source: string, input: string): Promise<HelperRunResult> {
+function runClipboardHelperSource(
+  source: string,
+  input: string,
+): Promise<HelperRunResult> {
   return new Promise<HelperRunResult>((resolve, reject) => {
-    const child = spawn(process.execPath, ["--input-type=module", "-e", source], {
-      stdio: ["pipe", "pipe", "pipe"],
-    });
+    const child = spawn(
+      process.execPath,
+      ["--input-type=module", "-e", source],
+      {
+        stdio: ["pipe", "pipe", "pipe"],
+      },
+    );
     const stdoutChunks: Buffer[] = [];
     const stderrChunks: Buffer[] = [];
     let settled = false;
@@ -407,7 +498,11 @@ function runClipboardHelperSource(source: string, input: string): Promise<Helper
       } catch {
         // Best effort: the timeout already fails the helper-source test.
       }
-      finish(new Error(`clipboard helper timed out after ${CLIPBOARD_HELPER_TEST_TIMEOUT_MS}ms`));
+      finish(
+        new Error(
+          `clipboard helper timed out after ${CLIPBOARD_HELPER_TEST_TIMEOUT_MS}ms`,
+        ),
+      );
     }, CLIPBOARD_HELPER_TEST_TIMEOUT_MS);
 
     child.stdout.on("data", (chunk: Buffer | string) => {
@@ -486,14 +581,34 @@ function assertRedoRoundTrip(options: {
   sendKeys(editor, keys);
 
   assert.equal(editor.getText(), expectedText, `text after [${keys.join("")}]`);
-  assert.deepEqual(editor.getCursor(), expectedCursor, `cursor after [${keys.join("")}]`);
-  assert.equal(editor.getRegister(), expectedRegister, `register after [${keys.join("")}]`);
+  assert.deepEqual(
+    editor.getCursor(),
+    expectedCursor,
+    `cursor after [${keys.join("")}]`,
+  );
+  assert.equal(
+    editor.getRegister(),
+    expectedRegister,
+    `register after [${keys.join("")}]`,
+  );
 
   sendKeys(editor, ["u", "\x12"]);
 
-  assert.equal(editor.getText(), expectedText, `redo text after [${keys.join("")}]`);
-  assert.deepEqual(editor.getCursor(), expectedCursor, `redo cursor after [${keys.join("")}]`);
-  assert.equal(editor.getRegister(), expectedRegister, `redo register after [${keys.join("")}]`);
+  assert.equal(
+    editor.getText(),
+    expectedText,
+    `redo text after [${keys.join("")}]`,
+  );
+  assert.deepEqual(
+    editor.getCursor(),
+    expectedCursor,
+    `redo cursor after [${keys.join("")}]`,
+  );
+  assert.equal(
+    editor.getRegister(),
+    expectedRegister,
+    `redo register after [${keys.join("")}]`,
+  );
 }
 
 function makeGeneratedLineFixtures(count: number): string[] {
@@ -507,7 +622,8 @@ function makeGeneratedLineFixtures(count: number): string[] {
   const punct = ["-", "--", "::", ".", ",", "!?", "#"];
   const spaces = [" ", "  ", "   ", "\t"];
   const fixtures = ["", "   ", "---", "a", "a   b", "foo--bar"];
-  const pick = (values: readonly string[]): string => values[next() % values.length] ?? "";
+  const pick = (values: readonly string[]): string =>
+    values[next() % values.length] ?? "";
 
   for (let i = 0; i < count; i++) {
     const parts: string[] = [];
@@ -654,11 +770,16 @@ describe("mode transitions", () => {
   it("kitty ctrl+[ in normal mode forwards escape upward", () => {
     const { editor } = createEditorWithSpy("hello");
 
-    const customEditorProto = Object.getPrototypeOf(Object.getPrototypeOf(editor));
+    const customEditorProto = Object.getPrototypeOf(
+      Object.getPrototypeOf(editor),
+    );
     const originalHandleInput = customEditorProto.handleInput;
     let forwardedEscapeCount = 0;
 
-    customEditorProto.handleInput = function (this: unknown, data: string): unknown {
+    customEditorProto.handleInput = function (
+      this: unknown,
+      data: string,
+    ): unknown {
       if (data === "\x1b") forwardedEscapeCount++;
       return originalHandleInput.call(this, data);
     };
@@ -807,7 +928,9 @@ describe("ex mini-mode", () => {
     assert.equal(session.editor.getMode(), "normal");
     assert.equal(session.editor.getText(), "hello");
     assert.deepEqual(session.editor.getCursor(), { line: 0, col: 0 });
-    assert.deepEqual(session.notifications, ["Prompt is not empty; use :q! to quit anyway"]);
+    assert.deepEqual(session.notifications, [
+      "Prompt is not empty; use :q! to quit anyway",
+    ]);
   });
 
   it(":qa refuses to quit when prompt has non-whitespace text", () => {
@@ -817,7 +940,9 @@ describe("ex mini-mode", () => {
 
     assert.equal(session.quitCalls, 0);
     assert.equal(session.editor.getText(), "hello");
-    assert.deepEqual(session.notifications, ["Prompt is not empty; use :qa! to quit anyway"]);
+    assert.deepEqual(session.notifications, [
+      "Prompt is not empty; use :qa! to quit anyway",
+    ]);
   });
 
   it(":q requests quit when prompt is empty", () => {
@@ -912,7 +1037,16 @@ describe("ex mini-mode", () => {
   it("split bracketed paste payload is accepted in ex mini-mode", () => {
     const session = createEditorWithSpy("hello");
 
-    sendKeys(session.editor, [":", "\x1b[200~", "q", "a", "!", "\x1b", "[201~", "\r"]);
+    sendKeys(session.editor, [
+      ":",
+      "\x1b[200~",
+      "q",
+      "a",
+      "!",
+      "\x1b",
+      "[201~",
+      "\r",
+    ]);
 
     assert.equal(session.quitCalls, 1);
     assert.equal(session.editor.getMode(), "normal");
@@ -933,11 +1067,16 @@ describe("ex mini-mode", () => {
 
   it("newline submit in split bracketed paste discards the trailing paste marker", () => {
     const session = createEditorWithSpy("hello");
-    const customEditorProto = Object.getPrototypeOf(Object.getPrototypeOf(session.editor));
+    const customEditorProto = Object.getPrototypeOf(
+      Object.getPrototypeOf(session.editor),
+    );
     const originalHandleInput = customEditorProto.handleInput;
     let forwardedEscapeCount = 0;
 
-    customEditorProto.handleInput = function (this: unknown, data: string): unknown {
+    customEditorProto.handleInput = function (
+      this: unknown,
+      data: string,
+    ): unknown {
       if (data === "\x1b") forwardedEscapeCount++;
       return originalHandleInput.call(this, data);
     };
@@ -1004,11 +1143,17 @@ describe("ex mini-mode", () => {
 
 describe("clipboard mirror policy settings", () => {
   it("applies clipboardMirror=never from settings", async () => {
-    const restore = setPiVimSettingsReaderForTests(() => ({ clipboardMirror: "never" }));
+    const restore = setPiVimSettingsReaderForTests(() => ({
+      clipboardMirror: "never",
+    }));
 
     try {
       const extension = await installExtensionWithEditorFactory();
-      const editor = extension.editorFactory(stubTui, stubTheme, stubKeybindings);
+      const editor = extension.editorFactory(
+        stubTui,
+        stubTheme,
+        stubKeybindings,
+      );
 
       assert.equal(editor.getClipboardMirrorPolicy(), "never");
       assert.equal(extension.notificationCalls, 0);
@@ -1018,11 +1163,17 @@ describe("clipboard mirror policy settings", () => {
   });
 
   it("falls back to all and warns for invalid clipboardMirror", async () => {
-    const restore = setPiVimSettingsReaderForTests(() => ({ clipboardMirror: "delete" }));
+    const restore = setPiVimSettingsReaderForTests(() => ({
+      clipboardMirror: "delete",
+    }));
 
     try {
       const extension = await installExtensionWithEditorFactory();
-      const editor = extension.editorFactory(stubTui, stubTheme, stubKeybindings);
+      const editor = extension.editorFactory(
+        stubTui,
+        stubTheme,
+        stubKeybindings,
+      );
 
       assert.equal(editor.getClipboardMirrorPolicy(), "all");
       assert.equal(extension.notificationCalls, 1);
@@ -1055,7 +1206,10 @@ describe("cursor shape lifecycle", () => {
     const originalSetShowHardwareCursor = tui.setShowHardwareCursor;
 
     assert.ok(originalWrite, "expected terminal.write test stub");
-    assert.ok(originalSetShowHardwareCursor, "expected setShowHardwareCursor test stub");
+    assert.ok(
+      originalSetShowHardwareCursor,
+      "expected setShowHardwareCursor test stub",
+    );
 
     tui.terminal.write = (data: string) => {
       operations.push(`write:${data}`);
@@ -1092,7 +1246,10 @@ describe("cursor shape lifecycle", () => {
     const originalSetShowHardwareCursor = tui.setShowHardwareCursor;
 
     assert.ok(originalWrite, "expected terminal.write test stub");
-    assert.ok(originalSetShowHardwareCursor, "expected setShowHardwareCursor test stub");
+    assert.ok(
+      originalSetShowHardwareCursor,
+      "expected setShowHardwareCursor test stub",
+    );
 
     tui.terminal.write = (data: string) => {
       operations.push(`write:${data}`);
@@ -1264,8 +1421,14 @@ describe("cursor shape rendering", () => {
 
     const lines = editor.render(20);
 
-    assert.equal(lines.some((line) => line.includes(CURSOR_MARKER)), false);
-    assert.equal(lines.some((line) => line.includes(SOFTWARE_CURSOR_SPACE)), true);
+    assert.equal(
+      lines.some((line) => line.includes(CURSOR_MARKER)),
+      false,
+    );
+    assert.equal(
+      lines.some((line) => line.includes(SOFTWARE_CURSOR_SPACE)),
+      true,
+    );
     assert.deepEqual(tui.terminalWrites, []);
     assertNoCursorShapeSequences(lines);
   });
@@ -1311,12 +1474,14 @@ describe("delete operator — dw / de / db / d$ / d0 / dd", () => {
   });
 
   it("clipboard helper treats Pi copyToClipboard throws as best-effort", async () => {
-    const helperSource = await getClipboardHelperSourceWithMock([
-      "export function copyToClipboard(text) {",
-      "  process.stdout.write(\"copy:\" + text);",
-      "  throw new Error(\"clipboard backend failed\");",
-      "}",
-    ].join("\n"));
+    const helperSource = await getClipboardHelperSourceWithMock(
+      [
+        "export function copyToClipboard(text) {",
+        '  process.stdout.write("copy:" + text);',
+        '  throw new Error("clipboard backend failed");',
+        "}",
+      ].join("\n"),
+    );
 
     const result = await runClipboardHelperSource(helperSource, "payload");
 
@@ -1326,12 +1491,14 @@ describe("delete operator — dw / de / db / d$ / d0 / dd", () => {
   });
 
   it("clipboard read helper treats no text as an empty successful read", async () => {
-    const helperSource = await getClipboardReadHelperSourceWithMock([
-      "{",
-      "  async hasText() { return false; },",
-      "  async getText() { throw new Error(\"No string found\"); },",
-      "}",
-    ].join("\n"));
+    const helperSource = await getClipboardReadHelperSourceWithMock(
+      [
+        "{",
+        "  async hasText() { return false; },",
+        '  async getText() { throw new Error("No string found"); },',
+        "}",
+      ].join("\n"),
+    );
 
     const result = await runClipboardHelperSource(helperSource, "");
 
@@ -1347,9 +1514,13 @@ describe("delete operator — dw / de / db / d$ / d0 / dd", () => {
 
     editor.setClipboardFn(async (text, signal) => {
       events.push(`start:${text}`);
-      signal?.addEventListener("abort", () => {
-        events.push(`abort:${text}`);
-      }, { once: true });
+      signal?.addEventListener(
+        "abort",
+        () => {
+          events.push(`abort:${text}`);
+        },
+        { once: true },
+      );
 
       if (text === "foo ") {
         await activeWrite.promise;
@@ -1377,9 +1548,13 @@ describe("delete operator — dw / de / db / d$ / d0 / dd", () => {
 
     editor.setClipboardFn(async (text, signal) => {
       events.push(`start:${text}`);
-      signal?.addEventListener("abort", () => {
-        events.push(`abort:${text}`);
-      }, { once: true });
+      signal?.addEventListener(
+        "abort",
+        () => {
+          events.push(`abort:${text}`);
+        },
+        { once: true },
+      );
 
       if (text === "foo ") {
         await firstWrite.promise;
@@ -1411,26 +1586,34 @@ describe("delete operator — dw / de / db / d$ / d0 / dd", () => {
     const events: string[] = [];
 
     editor.setClipboardWriteTimeoutMs(5);
-    editor.setClipboardFn((text, signal) => new Promise<void>((resolve, reject) => {
-      events.push(`start:${text}`);
-      signal?.addEventListener("abort", () => {
-        const reason = signal.reason instanceof Error
-          ? signal.reason.message
-          : String(signal.reason);
-        events.push(`abort:${text}:${reason}`);
-        reject(signal.reason ?? new Error("clipboard aborted"));
-      }, { once: true });
+    editor.setClipboardFn(
+      (text, signal) =>
+        new Promise<void>((resolve, reject) => {
+          events.push(`start:${text}`);
+          signal?.addEventListener(
+            "abort",
+            () => {
+              const reason =
+                signal.reason instanceof Error
+                  ? signal.reason.message
+                  : String(signal.reason);
+              events.push(`abort:${text}:${reason}`);
+              reject(signal.reason ?? new Error("clipboard aborted"));
+            },
+            { once: true },
+          );
 
-      if (text === "foo ") {
-        return;
-      }
+          if (text === "foo ") {
+            return;
+          }
 
-      events.push(`end:${text}`);
-      if (text === "baz ") {
-        finalWrite.resolve();
-      }
-      resolve();
-    }));
+          events.push(`end:${text}`);
+          if (text === "baz ") {
+            finalWrite.resolve();
+          }
+          resolve();
+        }),
+    );
 
     sendKeys(editor, ["d", "w", "d", "w", "d", "w"]);
     await withTimeout(
@@ -1456,20 +1639,23 @@ describe("delete operator — dw / de / db / d$ / d0 / dd", () => {
     const aborts = new Map(expectedRegisters.map((text) => [text, deferred()]));
 
     editor.setClipboardWriteTimeoutMs(0);
-    editor.setClipboardFn((text, signal) => new Promise<void>((_resolve, reject) => {
-      attempts.push(text);
-      const onAbort = () => {
-        aborts.get(text)?.resolve();
-        reject(createSpawnErrno("late spawn after timeout"));
-      };
+    editor.setClipboardFn(
+      (text, signal) =>
+        new Promise<void>((_resolve, reject) => {
+          attempts.push(text);
+          const onAbort = () => {
+            aborts.get(text)?.resolve();
+            reject(createSpawnErrno("late spawn after timeout"));
+          };
 
-      if (signal?.aborted) {
-        onAbort();
-        return;
-      }
+          if (signal?.aborted) {
+            onAbort();
+            return;
+          }
 
-      signal?.addEventListener("abort", onAbort, { once: true });
-    }));
+          signal?.addEventListener("abort", onAbort, { once: true });
+        }),
+    );
 
     for (const expectedRegister of expectedRegisters) {
       sendKeys(editor, ["d", "w"]);
@@ -1820,7 +2006,11 @@ describe("linewise operators and counts", () => {
 
       assert.equal(editor.getText(), "foo bar", `${scenario.name} text`);
       assert.equal(editor.getRegister(), "seed", `${scenario.name} register`);
-      assert.deepEqual(editor.getCursor(), beforeCursor, `${scenario.name} cursor`);
+      assert.deepEqual(
+        editor.getCursor(),
+        beforeCursor,
+        `${scenario.name} cursor`,
+      );
     }
   });
 
@@ -1914,9 +2104,7 @@ describe("buffer motions — gg / G", () => {
 
   it("gg reaches line 0 across wrapped logical lines", () => {
     const wrappedLine = "x".repeat(200);
-    const editor = createEditorAtBufferEnd(
-      `top\n${wrappedLine}\nbottom`,
-    );
+    const editor = createEditorAtBufferEnd(`top\n${wrappedLine}\nbottom`);
 
     sendKeys(editor, ["g", "g"]);
 
@@ -1998,7 +2186,8 @@ describe("first non-whitespace motion — ^", () => {
 });
 
 describe("paragraph motions — { / }", () => {
-  const paragraphFixture = "alpha one\nalpha two\n\n   \nbeta one\nbeta two\n\ngamma one\n\n   ";
+  const paragraphFixture =
+    "alpha one\nalpha two\n\n   \nbeta one\nbeta two\n\ngamma one\n\n   ";
 
   it("} moves to next paragraph start at column 0", () => {
     const { editor } = createMultiLineEditor(paragraphFixture);
@@ -2488,8 +2677,12 @@ describe("WORD text objects — iW / aW", () => {
   });
 
   it("d2iW and d2aW count WORDs using word-object whitespace policy", () => {
-    const { editor: inner } = createEditorWithSpy("foo path/to-file --flag=value bar");
-    const { editor: around } = createEditorWithSpy("foo path/to-file --flag=value bar");
+    const { editor: inner } = createEditorWithSpy(
+      "foo path/to-file --flag=value bar",
+    );
+    const { editor: around } = createEditorWithSpy(
+      "foo path/to-file --flag=value bar",
+    );
 
     setInternalCursor(inner, 4);
     sendKeys(inner, ["d", "2", "i", "W"]);
@@ -2539,49 +2732,65 @@ describe("quote text objects", () => {
   it("supports double-quote text objects on the current quoted string", () => {
     const scenarios = [
       {
-        name: "ci\"",
-        keys: ["c", "i", "\""],
-        expectedText: "say \"\" now",
+        name: 'ci"',
+        keys: ["c", "i", '"'],
+        expectedText: 'say "" now',
         expectedRegister: "hello",
         expectedMode: "insert",
         expectedCursor: { line: 0, col: 5 },
       },
       {
-        name: "di\"",
-        keys: ["d", "i", "\""],
-        expectedText: "say \"\" now",
+        name: 'di"',
+        keys: ["d", "i", '"'],
+        expectedText: 'say "" now',
         expectedRegister: "hello",
         expectedMode: "normal",
         expectedCursor: { line: 0, col: 5 },
       },
       {
-        name: "yi\"",
-        keys: ["y", "i", "\""],
-        expectedText: "say \"hello\" now",
+        name: 'yi"',
+        keys: ["y", "i", '"'],
+        expectedText: 'say "hello" now',
         expectedRegister: "hello",
         expectedMode: "normal",
         expectedCursor: { line: 0, col: 6 },
       },
       {
-        name: "ca\"",
-        keys: ["c", "a", "\""],
+        name: 'ca"',
+        keys: ["c", "a", '"'],
         expectedText: "say  now",
-        expectedRegister: "\"hello\"",
+        expectedRegister: '"hello"',
         expectedMode: "insert",
         expectedCursor: { line: 0, col: 4 },
       },
     ];
 
     for (const scenario of scenarios) {
-      const { editor } = createEditorWithSpy("say \"hello\" now");
+      const { editor } = createEditorWithSpy('say "hello" now');
       setInternalCursor(editor, 6);
 
       sendKeys(editor, scenario.keys);
 
-      assert.equal(editor.getText(), scenario.expectedText, `${scenario.name} text`);
-      assert.equal(editor.getRegister(), scenario.expectedRegister, `${scenario.name} register`);
-      assert.equal(editor.getMode(), scenario.expectedMode, `${scenario.name} mode`);
-      assert.deepEqual(editor.getCursor(), scenario.expectedCursor, `${scenario.name} cursor`);
+      assert.equal(
+        editor.getText(),
+        scenario.expectedText,
+        `${scenario.name} text`,
+      );
+      assert.equal(
+        editor.getRegister(),
+        scenario.expectedRegister,
+        `${scenario.name} register`,
+      );
+      assert.equal(
+        editor.getMode(),
+        scenario.expectedMode,
+        `${scenario.name} mode`,
+      );
+      assert.deepEqual(
+        editor.getCursor(),
+        scenario.expectedCursor,
+        `${scenario.name} cursor`,
+      );
     }
   });
 
@@ -2607,7 +2816,11 @@ describe("quote text objects", () => {
 
       sendKeys(editor, scenario.keys);
 
-      assert.equal(editor.getText(), scenario.expectedText, `${scenario.name} text`);
+      assert.equal(
+        editor.getText(),
+        scenario.expectedText,
+        `${scenario.name} text`,
+      );
       assert.equal(editor.getRegister(), "hello", `${scenario.name} register`);
     }
   });
@@ -2617,20 +2830,20 @@ describe("quote text objects", () => {
     const { editor } = createEditorWithSpy(initial);
 
     setInternalCursor(editor, 14);
-    sendKeys(editor, ["d", "i", "\""]);
+    sendKeys(editor, ["d", "i", '"']);
 
     assert.equal(editor.getText(), String.raw`say \"not\" "" now`);
     assert.equal(editor.getRegister(), "yes");
   });
 
   it("does not pair quotes across logical lines", () => {
-    const initial = "say \"hello\nworld\" now";
+    const initial = 'say "hello\nworld" now';
     const { editor } = createMultiLineEditor(initial);
     const beforeCursor = { line: 0, col: 5 };
     editor.setRegister("seed");
 
     setInternalCursor(editor, beforeCursor.col, beforeCursor.line);
-    sendKeys(editor, ["d", "i", "\""]);
+    sendKeys(editor, ["d", "i", '"']);
 
     assert.equal(editor.getText(), initial);
     assert.equal(editor.getRegister(), "seed");
@@ -2639,47 +2852,51 @@ describe("quote text objects", () => {
 
   it("empty inner quotes no-op for delete and yank", () => {
     const scenarios = [
-      { name: "delete", keys: ["d", "i", "\""] },
-      { name: "yank", keys: ["y", "i", "\""] },
+      { name: "delete", keys: ["d", "i", '"'] },
+      { name: "yank", keys: ["y", "i", '"'] },
     ];
 
     for (const scenario of scenarios) {
-      const { editor } = createEditorWithSpy("say \"\" now");
+      const { editor } = createEditorWithSpy('say "" now');
       const beforeCursor = { line: 0, col: 4 };
       editor.setRegister("seed");
 
       setInternalCursor(editor, beforeCursor.col, beforeCursor.line);
       sendKeys(editor, scenario.keys);
 
-      assert.equal(editor.getText(), "say \"\" now", `${scenario.name} text`);
+      assert.equal(editor.getText(), 'say "" now', `${scenario.name} text`);
       assert.equal(editor.getRegister(), "seed", `${scenario.name} register`);
-      assert.deepEqual(editor.getCursor(), beforeCursor, `${scenario.name} cursor`);
+      assert.deepEqual(
+        editor.getCursor(),
+        beforeCursor,
+        `${scenario.name} cursor`,
+      );
       assert.equal(editor.getMode(), "normal", `${scenario.name} mode`);
     }
   });
 
   it("empty inner quote change enters insert at the inner start", () => {
-    const { editor } = createEditorWithSpy("say \"\" now");
+    const { editor } = createEditorWithSpy('say "" now');
     editor.setRegister("seed");
 
     setInternalCursor(editor, 4);
-    sendKeys(editor, ["c", "i", "\""]);
+    sendKeys(editor, ["c", "i", '"']);
 
-    assert.equal(editor.getText(), "say \"\" now");
+    assert.equal(editor.getText(), 'say "" now');
     assert.equal(editor.getRegister(), "seed");
     assert.equal(editor.getMode(), "insert");
     assert.deepEqual(editor.getCursor(), { line: 0, col: 5 });
   });
 
   it("counted quote text objects cancel without mutation or register writes", () => {
-    const { editor } = createEditorWithSpy("say \"hello\" now");
+    const { editor } = createEditorWithSpy('say "hello" now');
     const beforeCursor = { line: 0, col: 6 };
     editor.setRegister("seed");
 
     setInternalCursor(editor, beforeCursor.col, beforeCursor.line);
-    sendKeys(editor, ["d", "2", "i", "\""]);
+    sendKeys(editor, ["d", "2", "i", '"']);
 
-    assert.equal(editor.getText(), "say \"hello\" now");
+    assert.equal(editor.getText(), 'say "hello" now');
     assert.equal(editor.getRegister(), "seed");
     assert.deepEqual(editor.getCursor(), beforeCursor);
     assert.equal(editor.getMode(), "normal");
@@ -2741,10 +2958,26 @@ describe("bracket text objects", () => {
       setInternalCursor(editor, scenario.cursorCol);
       sendKeys(editor, scenario.keys);
 
-      assert.equal(editor.getText(), scenario.expectedText, `${scenario.name} text`);
-      assert.equal(editor.getRegister(), scenario.expectedRegister, `${scenario.name} register`);
-      assert.equal(editor.getMode(), scenario.expectedMode, `${scenario.name} mode`);
-      assert.deepEqual(editor.getCursor(), scenario.expectedCursor, `${scenario.name} cursor`);
+      assert.equal(
+        editor.getText(),
+        scenario.expectedText,
+        `${scenario.name} text`,
+      );
+      assert.equal(
+        editor.getRegister(),
+        scenario.expectedRegister,
+        `${scenario.name} register`,
+      );
+      assert.equal(
+        editor.getMode(),
+        scenario.expectedMode,
+        `${scenario.name} mode`,
+      );
+      assert.deepEqual(
+        editor.getCursor(),
+        scenario.expectedCursor,
+        `${scenario.name} cursor`,
+      );
     }
   });
 
@@ -2793,7 +3026,11 @@ describe("bracket text objects", () => {
       setInternalCursor(editor, scenario.cursorCol);
       sendKeys(editor, scenario.keys);
 
-      assert.equal(editor.getText(), scenario.expectedText, `${scenario.name} text`);
+      assert.equal(
+        editor.getText(),
+        scenario.expectedText,
+        `${scenario.name} text`,
+      );
       assert.equal(editor.getRegister(), "foo", `${scenario.name} register`);
     }
   });
@@ -2853,7 +3090,11 @@ describe("bracket text objects", () => {
 
       assert.equal(editor.getText(), "call() now", `${scenario.name} text`);
       assert.equal(editor.getRegister(), "seed", `${scenario.name} register`);
-      assert.deepEqual(editor.getCursor(), beforeCursor, `${scenario.name} cursor`);
+      assert.deepEqual(
+        editor.getCursor(),
+        beforeCursor,
+        `${scenario.name} cursor`,
+      );
       assert.equal(editor.getMode(), "normal", `${scenario.name} mode`);
     }
   });
@@ -2897,7 +3138,11 @@ describe("bracket text objects", () => {
 
       assert.equal(editor.getText(), scenario.initial, `${scenario.name} text`);
       assert.equal(editor.getRegister(), "seed", `${scenario.name} register`);
-      assert.deepEqual(editor.getCursor(), beforeCursor, `${scenario.name} cursor`);
+      assert.deepEqual(
+        editor.getCursor(),
+        beforeCursor,
+        `${scenario.name} cursor`,
+      );
       assert.equal(editor.getMode(), "normal", `${scenario.name} mode`);
     }
   });
@@ -2915,11 +3160,11 @@ describe("delimited text objects at end of line", () => {
   });
 
   it("resolves quote objects from $ on a non-final line", () => {
-    const { editor } = createMultiLineEditor("say \"hi\"\nnext");
+    const { editor } = createMultiLineEditor('say "hi"\nnext');
 
-    sendKeys(editor, ["$", "d", "i", "\""]);
+    sendKeys(editor, ["$", "d", "i", '"']);
 
-    assert.equal(editor.getText(), "say \"\"\nnext");
+    assert.equal(editor.getText(), 'say ""\nnext');
     assert.equal(editor.getRegister(), "hi");
     assert.deepEqual(editor.getCursor(), { line: 0, col: 5 });
   });
@@ -2937,10 +3182,10 @@ describe("delimited text objects at end of line", () => {
       },
       {
         name: "quote",
-        initial: "before\nsay \"hi\"",
+        initial: 'before\nsay "hi"',
         cursorLine: 1,
-        keys: ["$", "d", "i", "\""],
-        expectedText: "before\nsay \"\"",
+        keys: ["$", "d", "i", '"'],
+        expectedText: 'before\nsay ""',
         expectedRegister: "hi",
         expectedCursor: { line: 1, col: 5 },
       },
@@ -2952,16 +3197,28 @@ describe("delimited text objects at end of line", () => {
       setInternalCursor(editor, 0, scenario.cursorLine);
       sendKeys(editor, scenario.keys);
 
-      assert.equal(editor.getText(), scenario.expectedText, `${scenario.name} text`);
-      assert.equal(editor.getRegister(), scenario.expectedRegister, `${scenario.name} register`);
-      assert.deepEqual(editor.getCursor(), scenario.expectedCursor, `${scenario.name} cursor`);
+      assert.equal(
+        editor.getText(),
+        scenario.expectedText,
+        `${scenario.name} text`,
+      );
+      assert.equal(
+        editor.getRegister(),
+        scenario.expectedRegister,
+        `${scenario.name} register`,
+      );
+      assert.deepEqual(
+        editor.getCursor(),
+        scenario.expectedCursor,
+        `${scenario.name} cursor`,
+      );
     }
   });
 
   it("cancels delimiter objects from a final empty trailing-newline line", () => {
     const scenarios = [
       { name: "bracket", keys: ["d", "i", "("] },
-      { name: "quote", keys: ["c", "i", "\""] },
+      { name: "quote", keys: ["c", "i", '"'] },
     ];
 
     for (const scenario of scenarios) {
@@ -2974,14 +3231,18 @@ describe("delimited text objects at end of line", () => {
 
       assert.equal(editor.getText(), "call(foo)\n", `${scenario.name} text`);
       assert.equal(editor.getRegister(), "seed", `${scenario.name} register`);
-      assert.deepEqual(editor.getCursor(), beforeCursor, `${scenario.name} cursor`);
+      assert.deepEqual(
+        editor.getCursor(),
+        beforeCursor,
+        `${scenario.name} cursor`,
+      );
       assert.equal(editor.getMode(), "normal", `${scenario.name} mode`);
     }
   });
 
   it("cancels delimiter objects in an empty buffer", () => {
     const scenarios = [
-      { name: "delete quote", keys: ["d", "i", "\""] },
+      { name: "delete quote", keys: ["d", "i", '"'] },
       { name: "change bracket", keys: ["c", "i", "("] },
     ];
 
@@ -2994,7 +3255,11 @@ describe("delimited text objects at end of line", () => {
 
       assert.equal(editor.getText(), "", `${scenario.name} text`);
       assert.equal(editor.getRegister(), "seed", `${scenario.name} register`);
-      assert.deepEqual(editor.getCursor(), beforeCursor, `${scenario.name} cursor`);
+      assert.deepEqual(
+        editor.getCursor(),
+        beforeCursor,
+        `${scenario.name} cursor`,
+      );
       assert.equal(editor.getMode(), "normal", `${scenario.name} mode`);
     }
   });
@@ -3015,25 +3280,49 @@ describe("text object cancellation hardening", () => {
 
       sendKeys(editor, scenario.keys);
 
-      assert.equal(editor.getText(), "foo bar", `${scenario.name} cancellation text`);
-      assert.equal(editor.getRegister(), "seed", `${scenario.name} cancellation register`);
-      assert.deepEqual(editor.getCursor(), beforeCursor, `${scenario.name} cancellation cursor`);
-      assert.equal(editor.getMode(), "normal", `${scenario.name} cancellation mode`);
+      assert.equal(
+        editor.getText(),
+        "foo bar",
+        `${scenario.name} cancellation text`,
+      );
+      assert.equal(
+        editor.getRegister(),
+        "seed",
+        `${scenario.name} cancellation register`,
+      );
+      assert.deepEqual(
+        editor.getCursor(),
+        beforeCursor,
+        `${scenario.name} cancellation cursor`,
+      );
+      assert.equal(
+        editor.getMode(),
+        "normal",
+        `${scenario.name} cancellation mode`,
+      );
 
       sendKeys(editor, ["x"]);
 
-      assert.equal(editor.getText(), "oo bar", `${scenario.name} next key text`);
-      assert.equal(editor.getRegister(), "f", `${scenario.name} next key register`);
+      assert.equal(
+        editor.getText(),
+        "oo bar",
+        `${scenario.name} next key text`,
+      );
+      assert.equal(
+        editor.getRegister(),
+        "f",
+        `${scenario.name} next key register`,
+      );
     }
   });
 
   it("unmatched delimiters cancel without mutation or register writes", () => {
     const scenarios = [
       {
-        name: "di\"",
-        initial: "say \"hello",
+        name: 'di"',
+        initial: 'say "hello',
         cursorCol: 5,
-        keys: ["d", "i", "\""],
+        keys: ["d", "i", '"'],
       },
       {
         name: "ci(",
@@ -3059,19 +3348,23 @@ describe("text object cancellation hardening", () => {
 
       assert.equal(editor.getText(), scenario.initial, `${scenario.name} text`);
       assert.equal(editor.getRegister(), "seed", `${scenario.name} register`);
-      assert.deepEqual(editor.getCursor(), beforeCursor, `${scenario.name} cursor`);
+      assert.deepEqual(
+        editor.getCursor(),
+        beforeCursor,
+        `${scenario.name} cursor`,
+      );
       assert.equal(editor.getMode(), "normal", `${scenario.name} mode`);
     }
   });
 
   it("unmatched delimiter cancellation is not sticky", () => {
-    const initial = "say \"hello";
+    const initial = 'say "hello';
     const { editor } = createEditorWithSpy(initial);
     const beforeCursor = { line: 0, col: 5 };
     editor.setRegister("seed");
 
     setInternalCursor(editor, beforeCursor.col, beforeCursor.line);
-    sendKeys(editor, ["d", "i", "\""]);
+    sendKeys(editor, ["d", "i", '"']);
 
     assert.equal(editor.getText(), initial);
     assert.equal(editor.getRegister(), "seed");
@@ -3079,17 +3372,17 @@ describe("text object cancellation hardening", () => {
 
     sendKeys(editor, ["x"]);
 
-    assert.equal(editor.getText(), "say \"ello");
+    assert.equal(editor.getText(), 'say "ello');
     assert.equal(editor.getRegister(), "h");
   });
 
   it("counted delimited examples cancel without mutation or register writes", () => {
     const scenarios = [
       {
-        name: "d2i\"",
-        initial: "say \"hello\" now",
+        name: 'd2i"',
+        initial: 'say "hello" now',
         cursorCol: 6,
-        keys: ["d", "2", "i", "\""],
+        keys: ["d", "2", "i", '"'],
       },
       {
         name: "2ci(",
@@ -3115,7 +3408,11 @@ describe("text object cancellation hardening", () => {
 
       assert.equal(editor.getText(), scenario.initial, `${scenario.name} text`);
       assert.equal(editor.getRegister(), "seed", `${scenario.name} register`);
-      assert.deepEqual(editor.getCursor(), beforeCursor, `${scenario.name} cursor`);
+      assert.deepEqual(
+        editor.getCursor(),
+        beforeCursor,
+        `${scenario.name} cursor`,
+      );
       assert.equal(editor.getMode(), "normal", `${scenario.name} mode`);
     }
   });
@@ -3146,7 +3443,11 @@ describe("text object cancellation hardening", () => {
 
       assert.equal(editor.getText(), scenario.initial, `${scenario.name} text`);
       assert.equal(editor.getRegister(), "seed", `${scenario.name} register`);
-      assert.deepEqual(editor.getCursor(), beforeCursor, `${scenario.name} cursor`);
+      assert.deepEqual(
+        editor.getCursor(),
+        beforeCursor,
+        `${scenario.name} cursor`,
+      );
       assert.equal(editor.getMode(), "normal", `${scenario.name} mode`);
     }
   });
@@ -3622,7 +3923,9 @@ describe("word motion path selection", () => {
     for (const scenario of scenarios) {
       const { editor } = createEditorWithSpy("foo-bar baz");
       const raw = getRawEditor(editor);
-      const original = raw.wordBoundaryCache.tryFindTarget.bind(raw.wordBoundaryCache);
+      const original = raw.wordBoundaryCache.tryFindTarget.bind(
+        raw.wordBoundaryCache,
+      );
       let seenSemanticClass: string | null = null;
 
       raw.wordBoundaryCache.tryFindTarget = (...args: TryFindTargetArgs) => {
@@ -3634,7 +3937,11 @@ describe("word motion path selection", () => {
         sendKeys(editor, scenario.setup);
       }
       sendKeys(editor, [scenario.motion]);
-      assert.equal(seenSemanticClass, "WORD", `${scenario.motion} should use WORD class`);
+      assert.equal(
+        seenSemanticClass,
+        "WORD",
+        `${scenario.motion} should use WORD class`,
+      );
     }
   });
 
@@ -3708,7 +4015,12 @@ describe("word motion path selection", () => {
   });
 
   it("W/E at EOL and B at BOL fall back to canonical absolute scanner", () => {
-    const scenarios: Array<{ name: string; initial: string; setup: string[]; motion: string }> = [
+    const scenarios: Array<{
+      name: string;
+      initial: string;
+      setup: string[];
+      motion: string;
+    }> = [
       { name: "W@EOL", initial: "foo\nbar", setup: ["$"], motion: "W" },
       { name: "E@EOL", initial: "foo\nbar", setup: ["$"], motion: "E" },
       { name: "B@BOL", initial: "foo\nbar", setup: ["j", "0"], motion: "B" },
@@ -3737,26 +4049,27 @@ describe("word motion path selection", () => {
 
 describe("operator word-motion path selection", () => {
   it("line-local d/c/y + w/e/b avoid canonical absolute scanner", () => {
-    const scenarios: Array<{ name: string; initial: string; keys: string[] }> = [
-      { name: "dw", initial: "alpha beta", keys: ["d", "w"] },
-      { name: "de", initial: "alpha beta", keys: ["d", "e"] },
-      { name: "db", initial: "alpha beta", keys: ["w", "d", "b"] },
-      { name: "cw", initial: "alpha beta", keys: ["c", "w"] },
-      { name: "ce", initial: "alpha beta", keys: ["c", "e"] },
-      { name: "cb", initial: "alpha beta", keys: ["w", "c", "b"] },
-      { name: "yw", initial: "alpha beta", keys: ["y", "w"] },
-      { name: "ye", initial: "alpha beta", keys: ["y", "e"] },
-      { name: "yb", initial: "alpha beta", keys: ["w", "y", "b"] },
-      { name: "dW", initial: "alpha-beta gamma", keys: ["d", "W"] },
-      { name: "dE", initial: "alpha-beta gamma", keys: ["d", "E"] },
-      { name: "dB", initial: "alpha-beta gamma", keys: ["W", "d", "B"] },
-      { name: "cW", initial: "alpha-beta gamma", keys: ["c", "W"] },
-      { name: "cE", initial: "alpha-beta gamma", keys: ["c", "E"] },
-      { name: "cB", initial: "alpha-beta gamma", keys: ["W", "c", "B"] },
-      { name: "yW", initial: "alpha-beta gamma", keys: ["y", "W"] },
-      { name: "yE", initial: "alpha-beta gamma", keys: ["y", "E"] },
-      { name: "yB", initial: "alpha-beta gamma", keys: ["W", "y", "B"] },
-    ];
+    const scenarios: Array<{ name: string; initial: string; keys: string[] }> =
+      [
+        { name: "dw", initial: "alpha beta", keys: ["d", "w"] },
+        { name: "de", initial: "alpha beta", keys: ["d", "e"] },
+        { name: "db", initial: "alpha beta", keys: ["w", "d", "b"] },
+        { name: "cw", initial: "alpha beta", keys: ["c", "w"] },
+        { name: "ce", initial: "alpha beta", keys: ["c", "e"] },
+        { name: "cb", initial: "alpha beta", keys: ["w", "c", "b"] },
+        { name: "yw", initial: "alpha beta", keys: ["y", "w"] },
+        { name: "ye", initial: "alpha beta", keys: ["y", "e"] },
+        { name: "yb", initial: "alpha beta", keys: ["w", "y", "b"] },
+        { name: "dW", initial: "alpha-beta gamma", keys: ["d", "W"] },
+        { name: "dE", initial: "alpha-beta gamma", keys: ["d", "E"] },
+        { name: "dB", initial: "alpha-beta gamma", keys: ["W", "d", "B"] },
+        { name: "cW", initial: "alpha-beta gamma", keys: ["c", "W"] },
+        { name: "cE", initial: "alpha-beta gamma", keys: ["c", "E"] },
+        { name: "cB", initial: "alpha-beta gamma", keys: ["W", "c", "B"] },
+        { name: "yW", initial: "alpha-beta gamma", keys: ["y", "W"] },
+        { name: "yE", initial: "alpha-beta gamma", keys: ["y", "E"] },
+        { name: "yB", initial: "alpha-beta gamma", keys: ["W", "y", "B"] },
+      ];
 
     for (const scenario of scenarios) {
       const { editor } = createEditorWithSpy(scenario.initial);
@@ -3775,23 +4088,24 @@ describe("operator word-motion path selection", () => {
   });
 
   it("cross-line operator word motions fall back to canonical scanner", () => {
-    const scenarios: Array<{ name: string; initial: string; keys: string[] }> = [
-      { name: "dw@EOL", initial: "foo\nbar", keys: ["$", "d", "w"] },
-      { name: "cw@EOL", initial: "foo\nbar", keys: ["$", "c", "w"] },
-      { name: "yw@EOL", initial: "foo\nbar", keys: ["$", "y", "w"] },
-      { name: "db@BOL", initial: "foo\nbar", keys: ["j", "0", "d", "b"] },
-      { name: "cb@BOL", initial: "foo\nbar", keys: ["j", "0", "c", "b"] },
-      { name: "yb@BOL", initial: "foo\nbar", keys: ["j", "0", "y", "b"] },
-      { name: "dW@EOL", initial: "foo\nbar", keys: ["$", "d", "W"] },
-      { name: "cW@EOL", initial: "foo\nbar", keys: ["$", "c", "W"] },
-      { name: "yW@EOL", initial: "foo\nbar", keys: ["$", "y", "W"] },
-      { name: "dE@EOL", initial: "foo\nbar", keys: ["$", "d", "E"] },
-      { name: "cE@EOL", initial: "foo\nbar", keys: ["$", "c", "E"] },
-      { name: "yE@EOL", initial: "foo\nbar", keys: ["$", "y", "E"] },
-      { name: "dB@BOL", initial: "foo\nbar", keys: ["j", "0", "d", "B"] },
-      { name: "cB@BOL", initial: "foo\nbar", keys: ["j", "0", "c", "B"] },
-      { name: "yB@BOL", initial: "foo\nbar", keys: ["j", "0", "y", "B"] },
-    ];
+    const scenarios: Array<{ name: string; initial: string; keys: string[] }> =
+      [
+        { name: "dw@EOL", initial: "foo\nbar", keys: ["$", "d", "w"] },
+        { name: "cw@EOL", initial: "foo\nbar", keys: ["$", "c", "w"] },
+        { name: "yw@EOL", initial: "foo\nbar", keys: ["$", "y", "w"] },
+        { name: "db@BOL", initial: "foo\nbar", keys: ["j", "0", "d", "b"] },
+        { name: "cb@BOL", initial: "foo\nbar", keys: ["j", "0", "c", "b"] },
+        { name: "yb@BOL", initial: "foo\nbar", keys: ["j", "0", "y", "b"] },
+        { name: "dW@EOL", initial: "foo\nbar", keys: ["$", "d", "W"] },
+        { name: "cW@EOL", initial: "foo\nbar", keys: ["$", "c", "W"] },
+        { name: "yW@EOL", initial: "foo\nbar", keys: ["$", "y", "W"] },
+        { name: "dE@EOL", initial: "foo\nbar", keys: ["$", "d", "E"] },
+        { name: "cE@EOL", initial: "foo\nbar", keys: ["$", "c", "E"] },
+        { name: "yE@EOL", initial: "foo\nbar", keys: ["$", "y", "E"] },
+        { name: "dB@BOL", initial: "foo\nbar", keys: ["j", "0", "d", "B"] },
+        { name: "cB@BOL", initial: "foo\nbar", keys: ["j", "0", "c", "B"] },
+        { name: "yB@BOL", initial: "foo\nbar", keys: ["j", "0", "y", "B"] },
+      ];
 
     for (const scenario of scenarios) {
       const { editor } = createMultiLineEditor(scenario.initial);
@@ -3811,7 +4125,11 @@ describe("operator word-motion path selection", () => {
 });
 
 describe("word-motion fast path differential", () => {
-  const assertFastEqualsCanonical = (initial: string, keys: string[], label: string): void => {
+  const assertFastEqualsCanonical = (
+    initial: string,
+    keys: string[],
+    label: string,
+  ): void => {
     const fast = runScenario(initial, keys, "fast");
     const canonical = runScenario(initial, keys, "canonical");
     assert.deepEqual(fast, canonical, label);
@@ -3864,23 +4182,44 @@ describe("word-motion fast path differential", () => {
   });
 
   it("matches canonical behavior on cross-line uppercase WORD scenarios", () => {
-    const scenarios: Array<{ name: string; initial: string; keys: string[] }> = [
-      { name: "W@EOL", initial: "foo\nbar", keys: ["$", "W", "x"] },
-      { name: "2W@EOL", initial: "foo\nbar baz", keys: ["$", "2", "W", "x"] },
-      { name: "E@EOL", initial: "foo\nbar", keys: ["$", "E", "x"] },
-      { name: "2E@EOL", initial: "foo\nbar baz", keys: ["$", "2", "E", "x"] },
-      { name: "B@BOL", initial: "foo\nbar", keys: ["j", "0", "B", "x"] },
-      { name: "2B@BOL", initial: "foo bar\nbaz", keys: ["j", "0", "2", "B", "x"] },
-      { name: "dW@EOL", initial: "foo\nbar", keys: ["$", "d", "W"] },
-      { name: "cW@EOL", initial: "foo\nbar", keys: ["$", "c", "W", "X", "\x1b"] },
-      { name: "yW@EOL", initial: "foo\nbar", keys: ["$", "y", "W", "p"] },
-      { name: "dE@EOL", initial: "foo\nbar", keys: ["$", "d", "E"] },
-      { name: "cE@EOL", initial: "foo\nbar", keys: ["$", "c", "E", "X", "\x1b"] },
-      { name: "yE@EOL", initial: "foo\nbar", keys: ["$", "y", "E", "p"] },
-      { name: "dB@BOL", initial: "foo\nbar", keys: ["j", "0", "d", "B"] },
-      { name: "cB@BOL", initial: "foo\nbar", keys: ["j", "0", "c", "B", "X", "\x1b"] },
-      { name: "yB@BOL", initial: "foo\nbar", keys: ["j", "0", "y", "B", "p"] },
-    ];
+    const scenarios: Array<{ name: string; initial: string; keys: string[] }> =
+      [
+        { name: "W@EOL", initial: "foo\nbar", keys: ["$", "W", "x"] },
+        { name: "2W@EOL", initial: "foo\nbar baz", keys: ["$", "2", "W", "x"] },
+        { name: "E@EOL", initial: "foo\nbar", keys: ["$", "E", "x"] },
+        { name: "2E@EOL", initial: "foo\nbar baz", keys: ["$", "2", "E", "x"] },
+        { name: "B@BOL", initial: "foo\nbar", keys: ["j", "0", "B", "x"] },
+        {
+          name: "2B@BOL",
+          initial: "foo bar\nbaz",
+          keys: ["j", "0", "2", "B", "x"],
+        },
+        { name: "dW@EOL", initial: "foo\nbar", keys: ["$", "d", "W"] },
+        {
+          name: "cW@EOL",
+          initial: "foo\nbar",
+          keys: ["$", "c", "W", "X", "\x1b"],
+        },
+        { name: "yW@EOL", initial: "foo\nbar", keys: ["$", "y", "W", "p"] },
+        { name: "dE@EOL", initial: "foo\nbar", keys: ["$", "d", "E"] },
+        {
+          name: "cE@EOL",
+          initial: "foo\nbar",
+          keys: ["$", "c", "E", "X", "\x1b"],
+        },
+        { name: "yE@EOL", initial: "foo\nbar", keys: ["$", "y", "E", "p"] },
+        { name: "dB@BOL", initial: "foo\nbar", keys: ["j", "0", "d", "B"] },
+        {
+          name: "cB@BOL",
+          initial: "foo\nbar",
+          keys: ["j", "0", "c", "B", "X", "\x1b"],
+        },
+        {
+          name: "yB@BOL",
+          initial: "foo\nbar",
+          keys: ["j", "0", "y", "B", "p"],
+        },
+      ];
 
     for (const scenario of scenarios) {
       assertFastEqualsCanonical(scenario.initial, scenario.keys, scenario.name);
@@ -3889,7 +4228,11 @@ describe("word-motion fast path differential", () => {
 });
 
 describe("word-motion guard boundary regressions", () => {
-  const assertFastEqualsCanonical = (initial: string, keys: string[], label: string): void => {
+  const assertFastEqualsCanonical = (
+    initial: string,
+    keys: string[],
+    label: string,
+  ): void => {
     const fast = runScenario(initial, keys, "fast");
     const canonical = runScenario(initial, keys, "canonical");
     assert.deepEqual(fast, canonical, label);
@@ -3897,33 +4240,93 @@ describe("word-motion guard boundary regressions", () => {
 
   it("matches canonical behavior at EOL/BOL + punctuation/whitespace/empty boundaries", () => {
     const cases: Array<{ label: string; initial: string; keys: string[] }> = [
-      { label: "EOL cross-line dw", initial: "foo\nbar", keys: ["$", "d", "w"] },
-      { label: "BOL cross-line yb", initial: "foo\nbar", keys: ["j", "0", "y", "b"] },
-      { label: "EOL cross-line dW", initial: "foo\nbar", keys: ["$", "d", "W"] },
-      { label: "EOL cross-line yE", initial: "foo\nbar", keys: ["$", "y", "E", "p"] },
-      { label: "BOL cross-line cB", initial: "foo\nbar", keys: ["j", "0", "c", "B", "X", "\x1b"] },
-      { label: "punctuation run (word)", initial: "foo---bar", keys: ["w", "x"] },
-      { label: "punctuation run (WORD)", initial: "foo---bar", keys: ["W", "x"] },
-      { label: "whitespace run (word)", initial: "foo     bar", keys: ["w", "x"] },
-      { label: "whitespace run (WORD)", initial: "foo     bar", keys: ["W", "x"] },
+      {
+        label: "EOL cross-line dw",
+        initial: "foo\nbar",
+        keys: ["$", "d", "w"],
+      },
+      {
+        label: "BOL cross-line yb",
+        initial: "foo\nbar",
+        keys: ["j", "0", "y", "b"],
+      },
+      {
+        label: "EOL cross-line dW",
+        initial: "foo\nbar",
+        keys: ["$", "d", "W"],
+      },
+      {
+        label: "EOL cross-line yE",
+        initial: "foo\nbar",
+        keys: ["$", "y", "E", "p"],
+      },
+      {
+        label: "BOL cross-line cB",
+        initial: "foo\nbar",
+        keys: ["j", "0", "c", "B", "X", "\x1b"],
+      },
+      {
+        label: "punctuation run (word)",
+        initial: "foo---bar",
+        keys: ["w", "x"],
+      },
+      {
+        label: "punctuation run (WORD)",
+        initial: "foo---bar",
+        keys: ["W", "x"],
+      },
+      {
+        label: "whitespace run (word)",
+        initial: "foo     bar",
+        keys: ["w", "x"],
+      },
+      {
+        label: "whitespace run (WORD)",
+        initial: "foo     bar",
+        keys: ["W", "x"],
+      },
       { label: "empty line (word)", initial: "", keys: ["w", "d", "w"] },
       { label: "empty line (WORD)", initial: "", keys: ["W", "d", "W"] },
-      { label: "blank-middle-line W", initial: "foo\n\nbar", keys: ["$", "W", "x"] },
-      { label: "blank-middle-line B", initial: "foo\n\nbar", keys: ["j", "j", "0", "B", "x"] },
-      { label: "WORD punctuation + whitespace boundary", initial: "foo--bar   baz", keys: ["W", "E", "x"] },
+      {
+        label: "blank-middle-line W",
+        initial: "foo\n\nbar",
+        keys: ["$", "W", "x"],
+      },
+      {
+        label: "blank-middle-line B",
+        initial: "foo\n\nbar",
+        keys: ["j", "j", "0", "B", "x"],
+      },
+      {
+        label: "WORD punctuation + whitespace boundary",
+        initial: "foo--bar   baz",
+        keys: ["W", "E", "x"],
+      },
     ];
 
     for (const testCase of cases) {
-      assertFastEqualsCanonical(testCase.initial, testCase.keys, testCase.label);
+      assertFastEqualsCanonical(
+        testCase.initial,
+        testCase.keys,
+        testCase.label,
+      );
     }
   });
 
   it("keeps insert-mode behavior unaffected", () => {
-    assertFastEqualsCanonical("hello", ["i", "X", "Y", "\x1b", "x"], "insert mode");
+    assertFastEqualsCanonical(
+      "hello",
+      ["i", "X", "Y", "\x1b", "x"],
+      "insert mode",
+    );
   });
 
   it("keeps non-word command behavior unaffected", () => {
-    assertFastEqualsCanonical("foo", ["x", "P", "f", "o", "x"], "non-word commands");
+    assertFastEqualsCanonical(
+      "foo",
+      ["x", "P", "f", "o", "x"],
+      "non-word commands",
+    );
   });
 });
 
@@ -4355,7 +4758,15 @@ describe("put — line-wise", () => {
     const { editor } = createMultiLineEditor("aaa\nbbb\nccc\nddd");
     sendKeys(editor, ["3", "Y", "G", "p"]);
     const lines = editor.getText().split("\n");
-    assert.deepStrictEqual(lines, ["aaa", "bbb", "ccc", "ddd", "aaa", "bbb", "ccc"]);
+    assert.deepStrictEqual(lines, [
+      "aaa",
+      "bbb",
+      "ccc",
+      "ddd",
+      "aaa",
+      "bbb",
+      "ccc",
+    ]);
   });
 
   it("yy then p: duplicates line below", () => {
@@ -4380,7 +4791,8 @@ describe("undo / redo — u / ctrl+r", () => {
     const before = editor.getText();
     sendKeys(editor, ["u"]);
     assert.ok(
-      !editor.getText().includes("uhello") && editor.getText().length <= before.length,
+      !editor.getText().includes("uhello") &&
+        editor.getText().length <= before.length,
       "u must not be inserted as a literal character and text must not grow",
     );
   });
@@ -4641,10 +5053,7 @@ describe("undo / redo — u / ctrl+r", () => {
   });
 
   describe("central invalidation hook", () => {
-    function seedStaleRedo(options: {
-      initial: string;
-      multiLine?: boolean;
-    }): {
+    function seedStaleRedo(options: { initial: string; multiLine?: boolean }): {
       editor: ReturnType<typeof createEditorWithSpy>["editor"];
       staleRedoText: string;
     } {
@@ -4656,7 +5065,11 @@ describe("undo / redo — u / ctrl+r", () => {
       sendKeys(editor, ["x"]);
       const staleRedoText = editor.getText();
       sendKeys(editor, ["u"]);
-      assert.equal(editor.getText(), initial, "redo setup should restore initial text");
+      assert.equal(
+        editor.getText(),
+        initial,
+        "redo setup should restore initial text",
+      );
 
       return { editor, staleRedoText };
     }
@@ -4710,10 +5123,18 @@ describe("undo / redo — u / ctrl+r", () => {
         });
 
         sendKeys(editor, scenario.keys);
-        assert.equal(editor.getText(), scenario.expectedText, `${scenario.name} mutates text`);
+        assert.equal(
+          editor.getText(),
+          scenario.expectedText,
+          `${scenario.name} mutates text`,
+        );
 
         sendKeys(editor, ["\x12"]);
-        assert.equal(editor.getText(), scenario.expectedText, `${scenario.name} clears redo`);
+        assert.equal(
+          editor.getText(),
+          scenario.expectedText,
+          `${scenario.name} clears redo`,
+        );
       }
     });
 
@@ -4730,10 +5151,18 @@ describe("undo / redo — u / ctrl+r", () => {
             assert.equal(editor.getText(), "bcd", "undo transition checkpoint");
 
             sendKeys(editor, ["u"]);
-            assert.equal(editor.getText(), "abcd", "undo transition keeps redo stack");
+            assert.equal(
+              editor.getText(),
+              "abcd",
+              "undo transition keeps redo stack",
+            );
 
             sendKeys(editor, ["\x12", "\x12"]);
-            assert.equal(editor.getText(), "cd", "undo transition keeps both redo entries");
+            assert.equal(
+              editor.getText(),
+              "cd",
+              "undo transition keeps both redo entries",
+            );
           },
         },
         {
@@ -4744,10 +5173,18 @@ describe("undo / redo — u / ctrl+r", () => {
             assert.equal(editor.getText(), "abcd", "redo transition setup");
 
             sendKeys(editor, ["2", "\x12"]);
-            assert.equal(editor.getText(), "cd", "redo transition keeps stepwise redo");
+            assert.equal(
+              editor.getText(),
+              "cd",
+              "redo transition keeps stepwise redo",
+            );
 
             sendKeys(editor, ["u"]);
-            assert.equal(editor.getText(), "bcd", "redo transition keeps undo boundaries");
+            assert.equal(
+              editor.getText(),
+              "bcd",
+              "redo transition keeps undo boundaries",
+            );
           },
         },
       ];
@@ -4770,41 +5207,69 @@ describe("undo / redo — u / ctrl+r", () => {
           name: "navigation",
           run: (editor, staleRedoText) => {
             sendKeys(editor, ["l", "h", "\x12"]);
-            assert.equal(editor.getText(), staleRedoText, "navigation preserves redo");
+            assert.equal(
+              editor.getText(),
+              staleRedoText,
+              "navigation preserves redo",
+            );
           },
         },
         {
           name: "yank",
           run: (editor, staleRedoText) => {
             sendKeys(editor, ["y", "y", "\x12"]);
-            assert.equal(editor.getText(), staleRedoText, "yank preserves redo");
+            assert.equal(
+              editor.getText(),
+              staleRedoText,
+              "yank preserves redo",
+            );
           },
         },
         {
           name: "failed motion",
           run: (editor, staleRedoText) => {
             sendKeys(editor, ["f", "z", "\x12"]);
-            assert.equal(editor.getText(), staleRedoText, "failed motion preserves redo");
+            assert.equal(
+              editor.getText(),
+              staleRedoText,
+              "failed motion preserves redo",
+            );
           },
         },
         {
           name: "mode toggle",
           run: (editor, staleRedoText) => {
             sendKeys(editor, ["i", "\x1b", "\x12"]);
-            assert.equal(editor.getText(), staleRedoText, "mode toggle preserves redo");
+            assert.equal(
+              editor.getText(),
+              staleRedoText,
+              "mode toggle preserves redo",
+            );
           },
         },
         {
           name: "no-op redo",
           run: (editor, staleRedoText) => {
             sendKeys(editor, ["\x12"]);
-            assert.equal(editor.getText(), staleRedoText, "redo setup should replay once");
+            assert.equal(
+              editor.getText(),
+              staleRedoText,
+              "redo setup should replay once",
+            );
 
             sendKeys(editor, ["\x12"]);
-            assert.equal(editor.getText(), staleRedoText, "no-op redo does not mutate");
+            assert.equal(
+              editor.getText(),
+              staleRedoText,
+              "no-op redo does not mutate",
+            );
 
             sendKeys(editor, ["u", "\x12"]);
-            assert.equal(editor.getText(), staleRedoText, "no-op redo keeps history intact");
+            assert.equal(
+              editor.getText(),
+              staleRedoText,
+              "no-op redo keeps history intact",
+            );
           },
         },
       ];
@@ -4891,7 +5356,10 @@ describe("undo / redo — u / ctrl+r", () => {
     sendKeys(editor, ["i"]); // → insert mode
     assert.equal(editor.getMode(), "insert");
     sendKeys(editor, ["u"]);
-    assert.ok(editor.getText().includes("u"), "u in insert mode must insert character");
+    assert.ok(
+      editor.getText().includes("u"),
+      "u in insert mode must insert character",
+    );
   });
 
   it("undo does not self-invalidate redo stack", () => {
@@ -5018,10 +5486,7 @@ describe("undo / redo — u / ctrl+r", () => {
       raw.pushUndoSnapshot = undefined;
 
       try {
-        assert.throws(
-          () => sendKeys(editor, ["\x12"]),
-          /pushUndoSnapshot/i,
-        );
+        assert.throws(() => sendKeys(editor, ["\x12"]), /pushUndoSnapshot/i);
       } finally {
         raw.pushUndoSnapshot = saved;
       }
@@ -5289,8 +5754,8 @@ describe("operator cancellation", () => {
   it("Escape cancels pending operator without mutation", () => {
     const { editor } = createEditorWithSpy("hello");
     const before = editor.getText();
-    sendKeys(editor, ["d"]);        // pendingOperator = 'd'
-    sendKeys(editor, ["\x1b"]);     // cancel
+    sendKeys(editor, ["d"]); // pendingOperator = 'd'
+    sendKeys(editor, ["\x1b"]); // cancel
     assert.equal(editor.getText(), before);
     assert.equal(editor.getMode(), "normal");
   });
@@ -5298,15 +5763,15 @@ describe("operator cancellation", () => {
   it("Escape cancels pending motion without mutation", () => {
     const { editor } = createEditorWithSpy("hello");
     const before = editor.getText();
-    sendKeys(editor, ["f"]);        // pendingMotion = 'f'
-    sendKeys(editor, ["\x1b"]);     // cancel
+    sendKeys(editor, ["f"]); // pendingMotion = 'f'
+    sendKeys(editor, ["\x1b"]); // cancel
     assert.equal(editor.getText(), before);
   });
 
   it("unrecognised key after d operator cancels cleanly", () => {
     const { editor } = createEditorWithSpy("hello");
     const before = editor.getText();
-    sendKeys(editor, ["d", "z"]);   // 'z' is not a valid motion
+    sendKeys(editor, ["d", "z"]); // 'z' is not a valid motion
     assert.equal(editor.getText(), before);
   });
 
@@ -5370,11 +5835,16 @@ describe("operator cancellation", () => {
   it("double-escape recovery does not forward escape upward", () => {
     const { editor } = createEditorWithSpy("foo bar");
 
-    const customEditorProto = Object.getPrototypeOf(Object.getPrototypeOf(editor));
+    const customEditorProto = Object.getPrototypeOf(
+      Object.getPrototypeOf(editor),
+    );
     const originalHandleInput = customEditorProto.handleInput;
     let forwardedEscapeCount = 0;
 
-    customEditorProto.handleInput = function (this: unknown, data: string): unknown {
+    customEditorProto.handleInput = function (
+      this: unknown,
+      data: string,
+    ): unknown {
       if (data === "\x1b") forwardedEscapeCount++;
       return originalHandleInput.call(this, data);
     };
@@ -5478,9 +5948,11 @@ describe("additional count combinations", () => {
 describe("surrogate pair / buffer replacement regression", () => {
   it("dd deletes only the current line when it contains surrogate pairs", () => {
     const { editor } = createEditorWithSpy("");
-    (editor as unknown as {
-      state: { lines: string[]; cursorLine: number; cursorCol: number };
-    }).state = {
+    (
+      editor as unknown as {
+        state: { lines: string[]; cursorLine: number; cursorCol: number };
+      }
+    ).state = {
       lines: ["😀x", "keep"],
       cursorLine: 0,
       cursorCol: 0,
@@ -5492,9 +5964,11 @@ describe("surrogate pair / buffer replacement regression", () => {
 
   it("9x on multiline buffer does not cross newline", () => {
     const { editor } = createEditorWithSpy("");
-    (editor as unknown as {
-      state: { lines: string[]; cursorLine: number; cursorCol: number };
-    }).state = {
+    (
+      editor as unknown as {
+        state: { lines: string[]; cursorLine: number; cursorCol: number };
+      }
+    ).state = {
       lines: ["ab", "cd"],
       cursorLine: 0,
       cursorCol: 0,

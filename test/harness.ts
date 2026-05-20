@@ -32,11 +32,12 @@ export type CursorShapeTuiShape = {
   setShowHardwareCursor?: (show: boolean) => void;
 };
 
-export type CursorShapeTuiStub = ModalEditorConstructorArgs[0] & CursorShapeTuiShape & {
-  terminalWrites: string[];
-  hardwareCursorValues: boolean[];
-  getShowHardwareCursorCalls: number;
-};
+export type CursorShapeTuiStub = ModalEditorConstructorArgs[0] &
+  CursorShapeTuiShape & {
+    terminalWrites: string[];
+    hardwareCursorValues: boolean[];
+    getShowHardwareCursorCalls: number;
+  };
 
 export function createCursorShapeTui(
   options: CursorShapeTuiOptions = {},
@@ -98,7 +99,11 @@ export function createExtensionApiHarness(): ExtensionApiHarness {
     handlersFor(event: string): ExtensionHandlerStub[] {
       return [...(handlers.get(event) ?? [])];
     },
-    async emit(event: string, payload?: unknown, ctx?: unknown): Promise<unknown[]> {
+    async emit(
+      event: string,
+      payload?: unknown,
+      ctx?: unknown,
+    ): Promise<unknown[]> {
       const results: unknown[] = [];
       for (const handler of handlers.get(event) ?? []) {
         results.push(await handler(payload, ctx));
@@ -152,7 +157,9 @@ export function createEditorWithSpy(initialText: string): {
 
   editor.setClipboardFn((text) => clipboardWrites.push(text));
   editor.setClipboardReadFn(() => null);
-  editor.setQuitFn(() => { quitCalls++; });
+  editor.setQuitFn(() => {
+    quitCalls++;
+  });
   editor.setNotifyFn((message) => notifications.push(message));
 
   // Populate buffer in insert mode (editor starts in insert)
@@ -167,7 +174,9 @@ export function createEditorWithSpy(initialText: string): {
   return {
     editor,
     clipboardWrites,
-    get quitCalls() { return quitCalls; },
+    get quitCalls() {
+      return quitCalls;
+    },
     notifications,
   };
 }
@@ -190,7 +199,9 @@ export function createMultiLineEditor(text: string): {
   const editor = new ModalEditor(stubTui, stubTheme, stubKeybindings);
   editor.setClipboardFn((t) => clipboardWrites.push(t));
   editor.setClipboardReadFn(() => null);
-  editor.setQuitFn(() => { quitCalls++; });
+  editor.setQuitFn(() => {
+    quitCalls++;
+  });
   editor.setNotifyFn((message) => notifications.push(message));
 
   // Type text in insert mode (newlines create new lines)
@@ -218,7 +229,9 @@ export function createMultiLineEditor(text: string): {
   return {
     editor,
     clipboardWrites,
-    get quitCalls() { return quitCalls; },
+    get quitCalls() {
+      return quitCalls;
+    },
     notifications,
   };
 }

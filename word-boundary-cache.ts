@@ -52,7 +52,7 @@ function buildWordBoundaryData(
     charTypes[i] = getCharType(line[i], semanticClass);
   }
 
-  for (let runStart = 0; runStart < len;) {
+  for (let runStart = 0; runStart < len; ) {
     const runType = charTypes[runStart] ?? CharType.Space;
     let runEnd = runStart;
     while (runEnd + 1 < len && charTypes[runEnd + 1] === runType) {
@@ -153,9 +153,10 @@ export class WordBoundaryCache {
   private readonly maxEntries: number;
 
   constructor(maxEntries: number = DEFAULT_MAX_CACHE_ENTRIES) {
-    this.maxEntries = Number.isInteger(maxEntries) && maxEntries > 0
-      ? maxEntries
-      : DEFAULT_MAX_CACHE_ENTRIES;
+    this.maxEntries =
+      Number.isInteger(maxEntries) && maxEntries > 0
+        ? maxEntries
+        : DEFAULT_MAX_CACHE_ENTRIES;
   }
 
   private makeCacheKey(line: string, semanticClass: WordMotionClass): string {

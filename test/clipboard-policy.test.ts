@@ -17,12 +17,16 @@ describe("clipboard mirror policy resolver", () => {
   it("accepts all supported clipboard mirror policy values", () => {
     assert.deepEqual(resolveClipboardMirrorPolicy("all"), { policy: "all" });
     assert.deepEqual(resolveClipboardMirrorPolicy("yank"), { policy: "yank" });
-    assert.deepEqual(resolveClipboardMirrorPolicy("never"), { policy: "never" });
+    assert.deepEqual(resolveClipboardMirrorPolicy("never"), {
+      policy: "never",
+    });
   });
 
   it("normalizes clipboard mirror policy casing and whitespace", () => {
     assert.deepEqual(resolveClipboardMirrorPolicy("YANK"), { policy: "yank" });
-    assert.deepEqual(resolveClipboardMirrorPolicy(" never "), { policy: "never" });
+    assert.deepEqual(resolveClipboardMirrorPolicy(" never "), {
+      policy: "never",
+    });
   });
 
   it("falls back to all and reports invalid clipboard mirror strings", () => {
@@ -44,7 +48,10 @@ describe("clipboard mirror policy resolver", () => {
 
 describe("piVim clipboard mirror settings reader", () => {
   it("returns undefined when global and project settings are missing", () => {
-    assert.equal(readPiVimClipboardMirrorSetting(undefined, undefined), undefined);
+    assert.equal(
+      readPiVimClipboardMirrorSetting(undefined, undefined),
+      undefined,
+    );
     assert.equal(readPiVimClipboardMirrorSetting(null, null), undefined);
     assert.equal(readPiVimClipboardMirrorSetting("bad", 42), undefined);
   });

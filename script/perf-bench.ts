@@ -1,6 +1,6 @@
 import { spawnSync } from "node:child_process";
-import { performance } from "node:perf_hooks";
 import path from "node:path";
+import { performance } from "node:perf_hooks";
 import { pathToFileURL } from "node:url";
 
 import { ModalEditor } from "../index.js";
@@ -39,7 +39,10 @@ const stubKeybindings = {
 
 function percentile(sorted: number[], p: number): number {
   if (sorted.length === 0) return 0;
-  const idx = Math.min(sorted.length - 1, Math.max(0, Math.floor(p * (sorted.length - 1))));
+  const idx = Math.min(
+    sorted.length - 1,
+    Math.max(0, Math.floor(p * (sorted.length - 1))),
+  );
   return sorted[idx] ?? 0;
 }
 
@@ -53,7 +56,10 @@ function toStats(samples: number[]): Stats {
   };
 }
 
-function runNodeEval(code: string, extraArgs: string[] = []): { stdout: string; stderr: string } {
+function runNodeEval(
+  code: string,
+  extraArgs: string[] = [],
+): { stdout: string; stderr: string } {
   const result = spawnSync(
     process.execPath,
     ["--import", "tsx/esm", ...extraArgs, "-e", code],
@@ -69,7 +75,9 @@ function runNodeEval(code: string, extraArgs: string[] = []): { stdout: string; 
       [
         `node child process failed (status=${result.status})`,
         result.stderr?.trim() ?? "",
-      ].filter(Boolean).join("\n"),
+      ]
+        .filter(Boolean)
+        .join("\n"),
     );
   }
 
@@ -267,7 +275,10 @@ function runResponsivenessBenchmarks(): Record<string, SampledMetric> {
     samplesCount,
   );
 
-  const verticalLinesText = Array.from({ length: 320 }, (_, i) => `line_${i}`).join("\n");
+  const verticalLinesText = Array.from(
+    { length: 320 },
+    (_, i) => `line_${i}`,
+  ).join("\n");
   metrics["200j"] = benchmarkSingleOpWithReset(
     () => createEditor(verticalLinesText),
     () => {},
@@ -374,16 +385,30 @@ function summarizeForTextOutput(data: {
   const lines: string[] = [];
 
   lines.push("startup (median)");
-  lines.push(`  runtime_only: ${data.startup.runtime_only.stats.median.toFixed(2)} ms`);
-  lines.push(`  host_import: ${data.startup.host_import.stats.median.toFixed(2)} ms`);
-  lines.push(`  extension_import: ${data.startup.extension_import.stats.median.toFixed(2)} ms`);
-  lines.push(`  incremental_extension: ${data.startupIncrementalMs.toFixed(2)} ms`);
+  lines.push(
+    `  runtime_only: ${data.startup.runtime_only.stats.median.toFixed(2)} ms`,
+  );
+  lines.push(
+    `  host_import: ${data.startup.host_import.stats.median.toFixed(2)} ms`,
+  );
+  lines.push(
+    `  extension_import: ${data.startup.extension_import.stats.median.toFixed(2)} ms`,
+  );
+  lines.push(
+    `  incremental_extension: ${data.startupIncrementalMs.toFixed(2)} ms`,
+  );
   lines.push("");
 
   lines.push("memory (median heapUsed)");
-  lines.push(`  host_import: ${Math.round(data.memory.host_import.stats.median).toLocaleString()} bytes`);
-  lines.push(`  extension_import: ${Math.round(data.memory.extension_import.stats.median).toLocaleString()} bytes`);
-  lines.push(`  incremental_extension: ${Math.round(data.memoryIncrementalBytes).toLocaleString()} bytes`);
+  lines.push(
+    `  host_import: ${Math.round(data.memory.host_import.stats.median).toLocaleString()} bytes`,
+  );
+  lines.push(
+    `  extension_import: ${Math.round(data.memory.extension_import.stats.median).toLocaleString()} bytes`,
+  );
+  lines.push(
+    `  incremental_extension: ${Math.round(data.memoryIncrementalBytes).toLocaleString()} bytes`,
+  );
   lines.push("");
 
   lines.push("responsiveness (median us/op)");
@@ -400,12 +425,20 @@ function main(): void {
   const startupRuns = 7;
   const memoryRuns = 5;
 
-  const extensionImport = pathToFileURL(path.resolve(repoRoot, "index.ts")).href;
+  const extensionImport = pathToFileURL(
+    path.resolve(repoRoot, "index.ts"),
+  ).href;
 
   const startup = {
     runtime_only: measureStartup("", startupRuns),
-    host_import: measureStartup(`await import('@mariozechner/pi-coding-agent');`, startupRuns),
-    extension_import: measureStartup(`await import(${JSON.stringify(extensionImport)});`, startupRuns),
+    host_import: measureStartup(
+      `await import('@mariozechner/pi-coding-agent');`,
+      startupRuns,
+    ),
+    extension_import: measureStartup(
+      `await import(${JSON.stringify(extensionImport)});`,
+      startupRuns,
+    ),
   };
 
   const memory = {
@@ -415,8 +448,10 @@ function main(): void {
 
   const responsiveness = runResponsivenessBenchmarks();
 
-  const startupIncrementalMs = startup.extension_import.stats.median - startup.host_import.stats.median;
-  const memoryIncrementalBytes = memory.extension_import.stats.median - memory.host_import.stats.median;
+  const startupIncrementalMs =
+    startup.extension_import.stats.median - startup.host_import.stats.median;
+  const memoryIncrementalBytes =
+    memory.extension_import.stats.median - memory.host_import.stats.median;
 
   const payload = {
     generatedAt: new Date().toISOString(),

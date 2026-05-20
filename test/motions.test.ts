@@ -2,17 +2,17 @@
  * Unit tests for motions.ts — pure functions, no DOM/pi-tui dependency.
  */
 
-import { describe, it } from "node:test";
 import assert from "node:assert/strict";
+import { describe, it } from "node:test";
 import {
-  findWordMotionTarget,
   findCharMotionTarget,
   findFirstNonWhitespaceColumn,
+  findNextParagraphStart,
+  findParagraphMotionTarget,
+  findPrevParagraphStart,
+  findWordMotionTarget,
   isBlankLine,
   isParagraphStart,
-  findNextParagraphStart,
-  findPrevParagraphStart,
-  findParagraphMotionTarget,
 } from "../motions.js";
 import { WordBoundaryCache } from "../word-boundary-cache.js";
 
@@ -27,7 +27,8 @@ function makeGeneratedLineFixtures(count: number): string[] {
   const punct = ["-", "--", "::", ".", ",", "!?", "#"];
   const spaces = [" ", "  ", "   ", "\t"];
   const fixtures = ["", "   ", "---", "a", "a   b", "foo--bar"];
-  const pick = (values: readonly string[]): string => values[next() % values.length] ?? "";
+  const pick = (values: readonly string[]): string =>
+    values[next() % values.length] ?? "";
 
   for (let i = 0; i < count; i++) {
     const parts: string[] = [];
@@ -230,7 +231,10 @@ describe("WordBoundaryCache", () => {
     const cache = new WordBoundaryCache();
 
     assert.equal(cache.tryFindTarget("abc", -1, "forward", "start"), null);
-    assert.equal(cache.tryFindTarget("abc", Number.NaN, "forward", "start"), null);
+    assert.equal(
+      cache.tryFindTarget("abc", Number.NaN, "forward", "start"),
+      null,
+    );
   });
 });
 
@@ -241,10 +245,9 @@ describe("WordBoundaryCache differential", () => {
 
     for (const line of fixtures) {
       for (let col = 0; col <= line.length; col++) {
-        const cases: Array<[
-          direction: "forward" | "backward",
-          target: "start" | "end",
-        ]> = [
+        const cases: Array<
+          [direction: "forward" | "backward", target: "start" | "end"]
+        > = [
           ["forward", "start"],
           ["forward", "end"],
           ["backward", "start"],
@@ -252,7 +255,13 @@ describe("WordBoundaryCache differential", () => {
 
         for (const [direction, target] of cases) {
           for (const semanticClass of ["word", "WORD"] as const) {
-            const fast = cache.tryFindTarget(line, col, direction, target, semanticClass);
+            const fast = cache.tryFindTarget(
+              line,
+              col,
+              direction,
+              target,
+              semanticClass,
+            );
             const canonical = findWordMotionTarget(
               line,
               col,
