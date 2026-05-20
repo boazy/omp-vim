@@ -894,7 +894,7 @@ describe("ex mini-mode", () => {
 
   it("renders EX labels with the EX-specific colorizer", () => {
     const calls: string[] = [];
-    const editor = new ModalEditor(stubTui, stubTheme, stubKeybindings, {
+    const colorizers = {
       insert: (s: string) => {
         calls.push(`insert:${s}`);
         return `\x1b[32m${s}\x1b[39m`;
@@ -907,6 +907,9 @@ describe("ex mini-mode", () => {
         calls.push(`ex:${s}`);
         return `\x1b[35m${s}\x1b[39m`;
       },
+    };
+    const editor = new ModalEditor(stubTui, stubTheme, stubKeybindings, {
+      labelColorizers: colorizers,
     });
 
     editor.handleInput("\x1b");

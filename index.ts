@@ -97,11 +97,8 @@ type ClipboardWriteFn = (text: string, signal: AbortSignal) => Promise<void>;
 type ClipboardReadFn = () => string | null;
 type ClipboardProcess = ReturnType<typeof spawn>;
 
-type ModeLabelColorizers = {
-  insert: (s: string) => string;
-  normal: (s: string) => string;
-  ex: (s: string) => string;
-};
+type ModeColorizers = Record<Mode | "ex", (s: string) => string>;
+type ModalEditorOptions = { labelColorizers?: ModeColorizers | null };
 
 type CursorShapeSequence =
   | typeof INSERT_CURSOR_SHAPE
@@ -585,7 +582,7 @@ export class ModalEditor extends CustomEditor {
   private readonly redoStack: EditorSnapshot[] = [];
   private currentTransition: TransitionState = "none";
   private onChangeHooked: boolean = false;
-  private readonly labelColorizers: ModeLabelColorizers | null;
+  private readonly labelColorizers: ModeColorizers | null;
   private readonly cursorShapeRuntime: CursorShapeRuntime | null;
   private lastCursorShapeSequence: CursorShapeSequence | null = null;
 
@@ -605,11 +602,11 @@ export class ModalEditor extends CustomEditor {
     tui: CustomEditorConstructorArgs[0],
     theme: CustomEditorConstructorArgs[1],
     kb: CustomEditorConstructorArgs[2],
-    labelColorizers?: ModeLabelColorizers | null,
+    opts?: ModalEditorOptions,
   ) {
     super(tui, theme, kb);
     this.cursorShapeRuntime = getCursorShapeRuntime(tui);
-    this.labelColorizers = labelColorizers ?? null;
+    this.labelColorizers = opts?.labelColorizers ?? null;
   }
 
   // Test seams
@@ -3303,7 +3300,9 @@ export default function (pi: ExtensionAPI) {
       : null;
     ctx.ui.setEditorComponent((tui, theme, kb) => {
       cursorShapeCleanup = enableCursorShapeSupport(tui);
-      const editor = new ModalEditor(tui, theme, kb, colorizers);
+      const editor = new ModalEditor(tui, theme, kb, {
+        labelColorizers: colorizers,
+      });
       editor.setClipboardMirrorPolicy(clipboardMirrorPolicy.policy);
       editor.setQuitFn(() => ctx.shutdown());
       editor.setNotifyFn((message) => ctx.ui.notify(message, "warning"));
