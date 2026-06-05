@@ -7,9 +7,7 @@ This is a discovery workflow, not the regression gate. The durable gate is `npm 
 ## quick parity gate
 
 ```bash
-npm run test:nvim       # passing curated smoke cases
-npm run test:nvim:bugs  # known divergences; expected to fail until fixed
-npm run test:nvim:all   # smoke + known divergences
+npm run test:nvim  # all curated nvim parity cases
 ```
 
 The gate is separate from `npm test` and `npm run check` while the parity corpus is young.

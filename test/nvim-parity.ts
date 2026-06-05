@@ -29,7 +29,7 @@ const BASIC_PARITY_CASES: NvimParityCase[] = [
   },
 ];
 
-const KNOWN_BUG_CASES: NvimParityCase[] = [
+const REGRESSION_PARITY_CASES: NvimParityCase[] = [
   {
     name: "x on the final character moves the cursor back",
     initial: { text: "hello", cursor: { line: 0, col: 0 } },
@@ -55,8 +55,8 @@ describe("nvim parity smoke", () => {
   }
 });
 
-describe("nvim parity known bugs", () => {
-  for (const testCase of KNOWN_BUG_CASES) {
+describe("nvim parity regressions", () => {
+  for (const testCase of REGRESSION_PARITY_CASES) {
     it(testCase.name, async () => {
       await assertMatchesNvim(testCase);
     });
