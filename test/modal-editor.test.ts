@@ -11,7 +11,10 @@ import { spawn } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import { describe, it } from "node:test";
 import { CURSOR_MARKER, visibleWidth } from "@mariozechner/pi-tui";
-import installPiVim, { ModalEditor } from "../index.js";
+import installPiVim, {
+  ModalEditor,
+  setModeChangeCommandRunnerForTests,
+} from "../index.js";
 import type { WordMotionClass } from "../motions.js";
 import { setPiVimSettingsReaderForTests } from "../settings.js";
 import type {
@@ -225,6 +228,7 @@ function assertNoCursorShapeSequences(lines: string[]): void {
 
 type InstalledExtension = {
   editorFactory: EditorFactory;
+  eventBusEmissions(): Array<{ event: string; data: unknown }>;
   readonly notificationCalls: number;
   readonly notifications: NotificationCall[];
   readonly shutdownCalls: number;
@@ -287,6 +291,7 @@ async function installExtensionWithEditorFactory(
 
   return {
     editorFactory,
+    eventBusEmissions: () => pi.eventBusEmissions(),
     get notificationCalls() {
       return notificationCalls;
     },
@@ -964,14 +969,52 @@ describe("mode change callback", () => {
     assert.deepEqual(events, []);
   });
 
-  it("fires once for o / O which open a line and enter insert", () => {
-    const { editor } = createMultiLineEditor("foo\nbar");
+  for (const key of ["o", "O"] as const) {
+    it(`fires once for ${key} which opens a line and enters insert`, () => {
+      const { editor } = createMultiLineEditor("foo\nbar");
+      const events: ModeChangeEvent[] = [];
+      editor.setModeChangeFn((mode, prev) => events.push({ mode, prev }));
+
+      sendKeys(editor, [key]);
+
+      assert.equal(editor.getMode(), "insert");
+      assert.deepEqual(events, [{ mode: "insert", prev: "normal" }]);
+    });
+  }
+
+  for (const scenario of [
+    { name: "A", text: "hello", keys: ["A"] },
+    { name: "I", text: "  hello", keys: ["I"] },
+    { name: "C", text: "hello", keys: ["C"] },
+    { name: "S", text: "hello", keys: ["S"] },
+    { name: "s", text: "hello", keys: ["s"] },
+    { name: "cc", text: "hello", keys: ["c", "c"] },
+    { name: "c_", text: "hello", keys: ["c", "_"] },
+    { name: "c%", text: "(hello)", keys: ["c", "%"] },
+    { name: "cw", text: "hello world", keys: ["c", "w"] },
+    { name: "ciw", text: "hello world", keys: ["c", "i", "w"] },
+  ] as const) {
+    it(`fires once when ${scenario.name} enters insert`, () => {
+      const { editor } = createEditorWithSpy(scenario.text);
+      const events: ModeChangeEvent[] = [];
+      editor.setModeChangeFn((mode, prev) => events.push({ mode, prev }));
+
+      sendKeys(editor, [...scenario.keys]);
+
+      assert.equal(editor.getMode(), "insert");
+      assert.deepEqual(events, [{ mode: "insert", prev: "normal" }]);
+    });
+  }
+
+  it("does not fire when entering or leaving EX mini-mode", () => {
+    const { editor } = createEditorWithSpy("hello");
     const events: ModeChangeEvent[] = [];
     editor.setModeChangeFn((mode, prev) => events.push({ mode, prev }));
 
-    sendKeys(editor, ["o"]);
-    assert.equal(editor.getMode(), "insert");
-    assert.deepEqual(events, [{ mode: "insert", prev: "normal" }]);
+    sendKeys(editor, [":", "q", "\x1b"]);
+
+    assert.equal(editor.getMode(), "normal");
+    assert.deepEqual(events, []);
   });
 
   it("swallows callback errors so editing keeps working", () => {
@@ -982,6 +1025,72 @@ describe("mode change callback", () => {
 
     assert.doesNotThrow(() => sendKeys(editor, ["i"]));
     assert.equal(editor.getMode(), "insert");
+  });
+});
+
+describe("mode change extension hook", () => {
+  it("emits mode-change events and runs configured commands", async () => {
+    const commands: string[] = [];
+    const restoreRunner = setModeChangeCommandRunnerForTests((command) => {
+      commands.push(command);
+    });
+    const restoreSettings = setPiVimSettingsReaderForTests(() => ({
+      modeChange: { insert: "insert-cmd", normal: "normal-cmd" },
+    }));
+
+    try {
+      const extension = await installExtensionWithEditorFactory();
+      const editor = extension.editorFactory(
+        stubTui,
+        stubTheme,
+        stubKeybindings,
+      );
+
+      sendKeys(editor, ["\x1b", ":", "\x1b", "i"]);
+
+      assert.deepEqual(commands, ["normal-cmd", "insert-cmd"]);
+      assert.deepEqual(extension.eventBusEmissions(), [
+        {
+          event: "pi-vim:mode-change",
+          data: { mode: "normal", previousMode: "insert" },
+        },
+        {
+          event: "pi-vim:mode-change",
+          data: { mode: "insert", previousMode: "normal" },
+        },
+      ]);
+    } finally {
+      restoreSettings();
+      restoreRunner();
+    }
+  });
+
+  it("leaves external commands off by default", async () => {
+    const commands: string[] = [];
+    const restoreRunner = setModeChangeCommandRunnerForTests((command) => {
+      commands.push(command);
+    });
+    const restoreSettings = setPiVimSettingsReaderForTests(() => ({}));
+
+    try {
+      const extension = await installExtensionWithEditorFactory();
+      const editor = extension.editorFactory(
+        stubTui,
+        stubTheme,
+        stubKeybindings,
+      );
+
+      sendKeys(editor, ["\x1b", "i"]);
+
+      assert.deepEqual(commands, []);
+      assert.deepEqual(
+        extension.eventBusEmissions().map((emission) => emission.event),
+        ["pi-vim:mode-change", "pi-vim:mode-change"],
+      );
+    } finally {
+      restoreSettings();
+      restoreRunner();
+    }
   });
 });
 

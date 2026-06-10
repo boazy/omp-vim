@@ -73,13 +73,13 @@ export function readPiVimModeColors(g: unknown, p: unknown) {
 }
 
 export function readPiVimModeChange(g: unknown, p: unknown) {
-  // Same whole-setting override semantics as modeColors: a project value
-  // (even if malformed) suppresses the global, so personal mode-change
-  // commands never leak into a shared project checkout.
-  const v = get(p, "modeChange");
-  if (v !== M) return modeChange(v);
-  const w = get(g, "modeChange");
-  return modeChange(w);
+  void p;
+  // modeChange executes a shell command, so only the user-global settings file
+  // is trusted. Project settings may be checked into a repo; treating them as
+  // executable hook config would let a checkout run arbitrary commands when the
+  // editor changes mode.
+  const v = get(g, "modeChange");
+  return modeChange(v);
 }
 
 export function readPiVimBooleanSetting(

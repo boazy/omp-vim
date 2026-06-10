@@ -267,7 +267,7 @@ describe("piVim modeChange settings reader", () => {
     );
   });
 
-  it("lets project modeChange override global as a setting", () => {
+  it("ignores project modeChange settings because commands are global-only", () => {
     assert.deepEqual(
       readPiVimModeChange(
         {
@@ -277,24 +277,31 @@ describe("piVim modeChange settings reader", () => {
         },
         { piVim: { modeChange: { normal: "project-normal" } } },
       ),
-      { normal: "project-normal" },
+      { insert: "global-insert", normal: "global-normal" },
+    );
+    assert.deepEqual(
+      readPiVimModeChange(
+        {},
+        { piVim: { modeChange: { insert: "project-insert" } } },
+      ),
+      undefined,
     );
   });
 
-  it("does not fall back to global when project modeChange is invalid", () => {
-    assert.equal(
+  it("does not let invalid project modeChange suppress global commands", () => {
+    assert.deepEqual(
       readPiVimModeChange(
         { piVim: { modeChange: { insert: "global-insert" } } },
         { piVim: { modeChange: null } },
       ),
-      undefined,
+      { insert: "global-insert" },
     );
-    assert.equal(
+    assert.deepEqual(
       readPiVimModeChange(
-        { piVim: { modeChange: { insert: "global-insert" } } },
+        { piVim: { modeChange: { normal: "global-normal" } } },
         { piVim: { modeChange: { insert: "   " } } },
       ),
-      undefined,
+      { normal: "global-normal" },
     );
   });
 });

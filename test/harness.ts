@@ -83,14 +83,32 @@ export function createCursorShapeTui(
 export type ExtensionApiHarness = ExtensionAPI & {
   handlersFor(event: string): ExtensionHandlerStub[];
   emit(event: string, payload?: unknown, ctx?: unknown): Promise<unknown[]>;
+  eventBusEmissions(): Array<{ event: string; data: unknown }>;
 };
 
 type ExtensionHandlerStub = (event: unknown, ctx: unknown) => unknown;
+type EventBusHandlerStub = (data: unknown) => unknown;
 
 export function createExtensionApiHarness(): ExtensionApiHarness {
   const handlers = new Map<string, ExtensionHandlerStub[]>();
+  const eventBusHandlers = new Map<string, EventBusHandlerStub[]>();
+  const eventBusEmissions: Array<{ event: string; data: unknown }> = [];
 
   const harness = {
+    events: {
+      on(event: string, handler: EventBusHandlerStub): void {
+        const eventHandlers = eventBusHandlers.get(event) ?? [];
+        eventHandlers.push(handler);
+        eventBusHandlers.set(event, eventHandlers);
+      },
+      emit(event: string, data: unknown): boolean {
+        eventBusEmissions.push({ event, data });
+        for (const handler of eventBusHandlers.get(event) ?? []) {
+          handler(data);
+        }
+        return true;
+      },
+    },
     on(event: string, handler: ExtensionHandlerStub): void {
       const eventHandlers = handlers.get(event) ?? [];
       eventHandlers.push(handler);
@@ -109,6 +127,9 @@ export function createExtensionApiHarness(): ExtensionApiHarness {
         results.push(await handler(payload, ctx));
       }
       return results;
+    },
+    eventBusEmissions(): Array<{ event: string; data: unknown }> {
+      return [...eventBusEmissions];
     },
   };
 
