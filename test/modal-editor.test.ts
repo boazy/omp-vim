@@ -92,6 +92,7 @@ function getRawEditor(editor: ModalEditor): ModalEditorTestInternals {
 const INSERT_CURSOR_SHAPE = "\x1b[5 q";
 const BLOCK_CURSOR_SHAPE = "\x1b[1 q";
 const RESET_CURSOR_SHAPE = "\x1b[0 q";
+const SHOW_HARDWARE_CURSOR = "\x1b[?25h";
 const SOFTWARE_CURSOR_SPACE = "\x1b[7m \x1b[0m";
 /* eslint-disable no-control-regex -- DECSCUSR uses ESC. */
 // biome-ignore lint/suspicious/noControlCharactersInRegex: DECSCUSR uses ESC.
@@ -234,7 +235,7 @@ type InstalledExtension = {
   readonly notificationCalls: number;
   readonly notifications: NotificationCall[];
   readonly shutdownCalls: number;
-  emitShutdown(): Promise<void>;
+  emitShutdown(event?: { type?: string; reason?: string }): Promise<void>;
   readonly sessionShutdownHandlerCount: number;
   readonly sessionEndHandlerCount: number;
 };
@@ -303,8 +304,11 @@ async function installExtensionWithEditorFactory(
     get shutdownCalls() {
       return shutdownCalls;
     },
-    async emitShutdown(): Promise<void> {
-      await pi.emit("session_shutdown", undefined, ctx);
+    async emitShutdown(event?: {
+      type?: string;
+      reason?: string;
+    }): Promise<void> {
+      await pi.emit("session_shutdown", event, ctx);
     },
     get sessionShutdownHandlerCount() {
       return pi.handlersFor("session_shutdown").length;
@@ -1792,7 +1796,7 @@ describe("cursor shape lifecycle", () => {
     assert.equal(extension.sessionEndHandlerCount, 0);
   });
 
-  it("enables hardware cursor and restores the captured setting on shutdown", async () => {
+  it("enables hardware cursor and restores the captured setting on legacy shutdown", async () => {
     const extension = await installExtensionWithEditorFactory();
     const tui = createCursorShapeTui({ initialShowHardwareCursor: false });
     const operations: string[] = [];
@@ -1829,6 +1833,46 @@ describe("cursor shape lifecycle", () => {
       "set:true",
       `write:${RESET_CURSOR_SHAPE}`,
       "set:false",
+    ]);
+  });
+
+  it("keeps hardware cursor visible when quit cleanup runs after Pi stop", async () => {
+    const extension = await installExtensionWithEditorFactory();
+    const tui = createCursorShapeTui({ initialShowHardwareCursor: false });
+    const operations: string[] = [];
+    const originalWrite = tui.terminal.write;
+    const originalSetShowHardwareCursor = tui.setShowHardwareCursor;
+
+    assert.ok(originalWrite, "expected terminal.write test stub");
+    assert.ok(
+      originalSetShowHardwareCursor,
+      "expected setShowHardwareCursor test stub",
+    );
+
+    tui.terminal.write = (data: string) => {
+      operations.push(`write:${data}`);
+      originalWrite(data);
+    };
+    tui.setShowHardwareCursor = (show: boolean) => {
+      operations.push(`set:${show}`);
+      originalSetShowHardwareCursor(show);
+    };
+
+    extension.editorFactory(tui, stubTheme, stubKeybindings);
+    operations.push("pi:show-cursor");
+
+    await extension.emitShutdown({ type: "session_shutdown", reason: "quit" });
+
+    assert.deepEqual(tui.terminalWrites, [
+      RESET_CURSOR_SHAPE,
+      SHOW_HARDWARE_CURSOR,
+    ]);
+    assert.deepEqual(tui.hardwareCursorValues, [true]);
+    assert.deepEqual(operations, [
+      "set:true",
+      "pi:show-cursor",
+      `write:${RESET_CURSOR_SHAPE}`,
+      `write:${SHOW_HARDWARE_CURSOR}`,
     ]);
   });
 
