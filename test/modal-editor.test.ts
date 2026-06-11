@@ -1864,15 +1864,13 @@ describe("cursor shape lifecycle", () => {
     await extension.emitShutdown({ type: "session_shutdown", reason: "quit" });
 
     assert.deepEqual(tui.terminalWrites, [
-      RESET_CURSOR_SHAPE,
-      SHOW_HARDWARE_CURSOR,
+      RESET_CURSOR_SHAPE + SHOW_HARDWARE_CURSOR,
     ]);
     assert.deepEqual(tui.hardwareCursorValues, [true]);
     assert.deepEqual(operations, [
       "set:true",
       "pi:show-cursor",
-      `write:${RESET_CURSOR_SHAPE}`,
-      `write:${SHOW_HARDWARE_CURSOR}`,
+      `write:${RESET_CURSOR_SHAPE}${SHOW_HARDWARE_CURSOR}`,
     ]);
   });
 
