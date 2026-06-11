@@ -3465,6 +3465,10 @@ function runPendingModeChangeCommand(): void {
   if (pending) startModeChangeCommand(pending);
 }
 
+function clearPendingModeChangeCommand(): void {
+  pendingModeChangeCommand = null;
+}
+
 function cancelModeChangeCommands(): void {
   pendingModeChangeCommand = null;
   const active = activeModeChangeCommand;
@@ -3492,7 +3496,11 @@ function createModeChangeHandler(
     }
 
     const command = mode === "insert" ? insert : normal;
-    if (command) modeChangeCommandRunner(command);
+    if (command) {
+      modeChangeCommandRunner(command);
+    } else {
+      clearPendingModeChangeCommand();
+    }
   };
 }
 

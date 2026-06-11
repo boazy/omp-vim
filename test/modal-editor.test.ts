@@ -8,7 +8,9 @@
 
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { readFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, it } from "node:test";
 import { CURSOR_MARKER, visibleWidth } from "@mariozechner/pi-tui";
 import installPiVim, {
@@ -340,6 +342,10 @@ function nextImmediate(): Promise<void> {
   return new Promise<void>((resolve) => setImmediate(resolve));
 }
 
+function delay(ms: number): Promise<void> {
+  return new Promise<void>((resolve) => setTimeout(resolve, ms));
+}
+
 function withTimeout<T>(
   promise: Promise<T>,
   timeoutMs: number,
@@ -355,6 +361,35 @@ function withTimeout<T>(
       clearTimeout(timeoutId);
     }
   });
+}
+
+async function readLinesIfExists(path: string): Promise<string[]> {
+  try {
+    const text = await readFile(path, "utf8");
+    return text
+      .split("\n")
+      .map((line) => line.trim())
+      .filter((line) => line.length > 0);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
+    throw error;
+  }
+}
+
+async function waitForLineCount(path: string, count: number): Promise<void> {
+  await withTimeout(
+    (async () => {
+      while ((await readLinesIfExists(path)).length < count) {
+        await delay(10);
+      }
+    })(),
+    1_000,
+    `timed out waiting for ${path} to contain ${count} lines`,
+  );
+}
+
+function shellQuote(value: string): string {
+  return `'${value.replaceAll("'", "'\\''")}'`;
 }
 
 type HelperRunResult = {
@@ -1062,6 +1097,60 @@ describe("mode change extension hook", () => {
     } finally {
       restoreSettings();
       restoreRunner();
+    }
+  });
+
+  it("clears a queued command when the latest mode has no configured command", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "pi-vim-mode-change-"));
+    const scriptPath = join(dir, "hook.mjs");
+    const startsPath = join(dir, "starts.log");
+    const releasePath = join(dir, "release");
+    const command = [process.execPath, scriptPath, startsPath, releasePath]
+      .map(shellQuote)
+      .join(" ");
+    const restoreSettings = setPiVimSettingsReaderForTests(() => ({
+      modeChange: { normal: command },
+    }));
+    let extension: InstalledExtension | null = null;
+
+    await writeFile(
+      scriptPath,
+      [
+        'import { access, appendFile } from "node:fs/promises";',
+        "const [startsPath, releasePath] = process.argv.slice(2);",
+        'await appendFile(startsPath, "start\\n");',
+        "for (;;) {",
+        "  try {",
+        "    await access(releasePath);",
+        "    break;",
+        "  } catch {",
+        "    await new Promise((resolve) => setTimeout(resolve, 10));",
+        "  }",
+        "}",
+      ].join("\n"),
+    );
+
+    try {
+      extension = await installExtensionWithEditorFactory();
+      const editor = extension.editorFactory(
+        stubTui,
+        stubTheme,
+        stubKeybindings,
+      );
+
+      sendKeys(editor, ["\x1b"]);
+      await waitForLineCount(startsPath, 1);
+
+      sendKeys(editor, ["i", "\x1b", "i"]);
+      await writeFile(releasePath, "");
+      await delay(100);
+
+      assert.deepEqual(await readLinesIfExists(startsPath), ["start"]);
+    } finally {
+      restoreSettings();
+      await writeFile(releasePath, "").catch(() => {});
+      await extension?.emitShutdown();
+      await rm(dir, { recursive: true, force: true });
     }
   });
 
