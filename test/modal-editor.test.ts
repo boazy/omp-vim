@@ -1836,7 +1836,7 @@ describe("cursor shape lifecycle", () => {
     ]);
   });
 
-  it("keeps hardware cursor visible when quit cleanup runs after Pi stop", async () => {
+  it("keeps hardware cursor visible for quit shutdown after Pi stop", async () => {
     const extension = await installExtensionWithEditorFactory();
     const tui = createCursorShapeTui({ initialShowHardwareCursor: false });
     const operations: string[] = [];
@@ -1864,13 +1864,15 @@ describe("cursor shape lifecycle", () => {
     await extension.emitShutdown({ type: "session_shutdown", reason: "quit" });
 
     assert.deepEqual(tui.terminalWrites, [
-      RESET_CURSOR_SHAPE + SHOW_HARDWARE_CURSOR,
+      RESET_CURSOR_SHAPE,
+      SHOW_HARDWARE_CURSOR,
     ]);
     assert.deepEqual(tui.hardwareCursorValues, [true]);
     assert.deepEqual(operations, [
       "set:true",
       "pi:show-cursor",
-      `write:${RESET_CURSOR_SHAPE}${SHOW_HARDWARE_CURSOR}`,
+      `write:${RESET_CURSOR_SHAPE}`,
+      `write:${SHOW_HARDWARE_CURSOR}`,
     ]);
   });
 
