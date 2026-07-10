@@ -1,24 +1,46 @@
-# pi-vim
+# omp-vim
 
-Modal vim-like editing for Pi's input prompt. Covers the high-frequency 90% command surface.
+Modal vim-like editing for [Oh My Pi](https://github.com/can1357/oh-my-pi)'s input prompt. Covers the high-frequency 90% command surface.
+
+This is an Oh My Pi port of [`pi-vim`](https://github.com/lajarre/pi-vim) by lajarre. See [Oh My Pi port](#oh-my-pi-port) for what changed and current limitations.
 
 ## install
 
+From a local checkout:
+
 ```bash
-pi install npm:pi-vim
+git clone https://github.com/boazy/omp-vim
+omp plugin install ./omp-vim
 ```
 
-Restart Pi after install.
+Or directly from git:
+
+```bash
+omp plugin install git+https://github.com/boazy/omp-vim
+```
+
+Restart Oh My Pi after install. Only one prompt-editor extension can be active at a time.
+
+## Oh My Pi port
+
+Changes from upstream `pi-vim` required to run on Oh My Pi's compiled binary and current `@oh-my-pi/*` API:
+
+- Imports target `@oh-my-pi/pi-coding-agent`, `@oh-my-pi/pi-tui`, and `@oh-my-pi/pi-natives`; the manifest uses the `omp.extensions` key.
+- System-clipboard mirroring is in-process: `copyToClipboard` from `@oh-my-pi/pi-natives` for writes, and platform binaries (`pbpaste` / `wl-paste` / `xclip` / `xsel` / PowerShell) for reads. Upstream's `import.meta.resolve` + `process.execPath` subprocess helpers are removed — they cannot work inside a compiled binary.
+- The buffer/cursor engine is rerouted onto Oh My Pi's public `Editor` API (`setText`, `insertText`, `moveTo*`, arrow-key navigation) because Oh My Pi keeps editor state private. Cursor positioning is O(n) in prompt length, which is fine for short prompts.
+- Undo/redo is a self-contained snapshot stack (Oh My Pi does not expose the host undo hook).
+
+Known limitations: initial insert-mode typing (before the first `Esc`) is not undoable; `cw` includes the trailing space; the inherited test suite still targets the upstream API and is not yet ported.
 
 ## configure
 
-Settings are read from `~/.pi/agent/settings.json` and project `.pi/settings.json`.
+Settings are read from `~/.omp/agent/settings.json` and project `.omp/settings.json` under the `ompVim` key (the legacy `piVim` key is still accepted).
 
 Default-equivalent `settings.json`:
 
 ```json
 {
-  "piVim": {
+  "ompVim": {
     "clipboardMirror": "all",
     "modeColors": {
       "insert": "borderMuted",
@@ -30,18 +52,18 @@ Default-equivalent `settings.json`:
 }
 ```
 
-All keys are optional; omitting `piVim` is equivalent. Project overrides global for non-executing settings; project `modeColors` replaces global `modeColors` whole, with missing modes defaulting above. `modeChange` is intentionally absent from the default and is read only from the global settings file because it executes shell commands.
+All keys are optional; omitting `ompVim` is equivalent. Project overrides global for non-executing settings; project `modeColors` replaces global `modeColors` whole, with missing modes defaulting above. `modeChange` is intentionally absent from the default and is read only from the global settings file because it executes shell commands.
 
 `clipboardMirror`: `all` mirrors unnamed writes; `yank` mirrors yanks; `never` keeps writes internal. Non-mirrored writes stay local for `p` / `P`.
 
-`syncBorderColorWithMode`: `false` keeps Pi thinking border; `true` follows mode colors.
+`syncBorderColorWithMode`: `false` keeps the thinking border; `true` follows mode colors.
 
-`modeChange`: user-global shell command to run on every transition into the named mode. Both keys are optional. The command runs asynchronously via the system shell, stdio is discarded, failures are silenced, and a hung command is timed out so editing never blocks or breaks. If mode changes happen while a hook command is still running, pi-vim keeps only the latest pending command. Hooks fire only on actual transitions: not on the initial mode, not on EX entry/exit (EX is a sub-state of normal), and not on no-op `Esc` from normal. Because this is arbitrary shell, project `.pi/settings.json` values are ignored. pi-vim also emits `pi-vim:mode-change` on `pi.events` with `{ mode, previousMode }` for other extensions. Typical use is IME auto-switching via the third-party [`im-select`](https://github.com/daipeihust/im-select) CLI (cross-platform: macOS / Windows / Linux). Install per its README, then run `im-select` with no args to print your current IME id and plug those ids into the global config:
+`modeChange`: user-global shell command to run on every transition into the named mode. Both keys are optional. The command runs asynchronously via the system shell, stdio is discarded, failures are silenced, and a hung command is timed out so editing never blocks or breaks. If mode changes happen while a hook command is still running, omp-vim keeps only the latest pending command. Hooks fire only on actual transitions: not on the initial mode, not on EX entry/exit (EX is a sub-state of normal), and not on no-op `Esc` from normal. Because this is arbitrary shell, project `.omp/settings.json` values are ignored. omp-vim also emits `omp-vim:mode-change` on `pi.events` with `{ mode, previousMode }` for other extensions. Typical use is IME auto-switching via the third-party [`im-select`](https://github.com/daipeihust/im-select) CLI (cross-platform: macOS / Windows / Linux). Install per its README, then run `im-select` with no args to print your current IME id and plug those ids into the global config:
 
 macOS example
 ```json
 {
-  "piVim": {
+  "ompVim": {
     "modeChange": {
       "insert": "im-select im.rime.inputmethod.Squirrel.Hans",
       "normal": "im-select com.apple.keylayout.ABC"
@@ -50,11 +72,11 @@ macOS example
 }
 ```
 
-pi-vim does not bundle `im-select` and does not care which tool you use — any shell command works.
+omp-vim does not bundle `im-select` and does not care which tool you use — any shell command works.
 
 ### mode colors
 
-`piVim.modeColors` accepts Pi theme foreground tokens. Missing, invalid, or unknown tokens use defaults above.
+`ompVim.modeColors` accepts Oh My Pi theme foreground tokens. Missing, invalid, or unknown tokens use defaults above.
 
 Usual/safest: `accent`, `border`, `borderAccent`, `borderMuted`, `success`, `error`, `warning`, `muted`, `dim`, `text`, `thinkingText`.
 
@@ -65,8 +87,8 @@ Supported: `pi-vim` first, `@jordyvd/pi-image-attachments` second. pi-vim does n
 Smoke:
 
 ```bash
-pi -e ./index.ts -e ../pi-image-attachments/index.ts
-pi -e ./index.ts -e ../../../pi-image-attachments/index.ts
+omp -e ./index.ts -e ../pi-image-attachments/index.ts
+omp -e ./index.ts -e ../../../pi-image-attachments/index.ts
 ```
 
 Check: insert text; add/paste image path; see `[Image #1]`; submit text+image stripped; switch INSERT/NORMAL.
@@ -148,7 +170,7 @@ Use pi-vim for Vim muscle-memory in Pi prompts. Skip it if you need full Vim par
 | `o` | Normal → open line below + Insert |
 | `O` | Normal → open line above + Insert |
 
-Optional: move Pi's `app.interrupt` off bare `escape` in `~/.pi/agent/keybindings.json` if it overlaps with Insert→Normal; user config wins.
+Optional: move Oh My Pi's escape/interrupt binding off bare `escape` in `~/.omp/agent/keybindings.yml` if it overlaps with Insert→Normal; user config wins.
 
 #### ex mini-mode
 
@@ -340,9 +362,9 @@ Put reads the OS clipboard first unless the last local register write was not mi
 
 ## register and clipboard policy
 
-- `piVim.clipboardMirror = "all"` is the default: every unnamed-register write mirrors to the OS clipboard best-effort.
-- `piVim.clipboardMirror = "yank"` mirrors yanks only; deletes and changes update only pi-vim's internal shadow.
-- `piVim.clipboardMirror = "never"` disables write mirroring while keeping internal register writes synchronous.
+- `ompVim.clipboardMirror = "all"` is the default: every unnamed-register write mirrors to the OS clipboard best-effort.
+- `ompVim.clipboardMirror = "yank"` mirrors yanks only; deletes and changes update only omp-vim's internal shadow.
+- `ompVim.clipboardMirror = "never"` disables write mirroring while keeping internal register writes synchronous.
 - Rapid mirrored writes coalesce: only the latest pending value is guaranteed to be mirrored.
 - `p` / `P` read the OS clipboard first when no local write was skipped by policy, falling back to the shadow on read failure/timeout.
 - If policy skipped the last local write, `p` / `P` use the shadow so delete/yank → put works without touching the OS clipboard.

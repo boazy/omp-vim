@@ -1,4 +1,6 @@
-import { SettingsManager } from "@earendil-works/pi-coding-agent";
+import { existsSync, readFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
 
 export type ModeColorSettings = {
   insert?: string;
@@ -26,8 +28,10 @@ const rec = (v: unknown): v is Record<string, unknown> =>
   typeof v === "object" && v !== null && !Array.isArray(v);
 
 function get(s: unknown, k: keyof PiVimSettings): unknown {
-  if (!rec(s) || !Object.hasOwn(s, "piVim")) return M;
-  const p = s.piVim;
+  if (!rec(s)) return M;
+  const hasOmp = Object.hasOwn(s, "ompVim");
+  if (!hasOmp && !Object.hasOwn(s, "piVim")) return M;
+  const p = hasOmp ? s.ompVim : s.piVim;
   if (!rec(p)) return p;
   return Object.hasOwn(p, k) ? p[k] : M;
 }
@@ -93,10 +97,18 @@ export function readPiVimBooleanSetting(
   return typeof w === "boolean" ? w : undefined;
 }
 
+function loadSettingsFile(path: string): unknown {
+  try {
+    if (!existsSync(path)) return undefined;
+    return JSON.parse(readFileSync(path, "utf8"));
+  } catch {
+    return undefined;
+  }
+}
+
 function disk(cwd: string): PiVimSettings {
-  const s = SettingsManager.create(cwd),
-    g = s.getGlobalSettings(),
-    p = s.getProjectSettings();
+  const g = loadSettingsFile(join(homedir(), ".omp", "agent", "settings.json"));
+  const p = loadSettingsFile(join(cwd, ".omp", "settings.json"));
   return {
     clipboardMirror: readPiVimClipboardMirrorSetting(g, p),
     modeColors: readPiVimModeColors(g, p),

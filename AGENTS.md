@@ -1,11 +1,11 @@
 # AGENTS.md
 
-This repo is not expected, for now, to be imported as a dependency; treat exported internals as pi-vim-local unless documented otherwise.
+This is an Oh My Pi port of [lajarre/pi-vim](https://github.com/lajarre/pi-vim), published as `omp-vim`. It targets Oh My Pi's `@oh-my-pi/*` API and compiled-binary runtime. See the "Oh My Pi port" section in `README.md` for the concrete adaptations (native in-process clipboard, buffer/cursor engine rerouted onto the public `Editor` API, self-contained snapshot undo, settings read from `~/.omp`).
 
-For every new or changed Vim-like feature, add curated nvim parity coverage in `test/nvim-parity*.ts` unless the behavior is intentionally not Vim-compatible. If it is an intentional divergence, make that explicit in tests and documentation.
+Treat exported internals as omp-vim-local unless documented otherwise.
 
-Known nvim parity gaps may live as skipped tests. Apply the boy scout principle: when a branch touches the relevant behavior, unskip and fix nearby skipped parity cases alongside the branch's own change, or document why the gap remains out of scope. Do not batch unrelated parity fixes into a conflict-heavy branch.
+Shipped source is `index.ts` plus the sibling `*.ts` lib modules; `tsconfig.json` scopes `typecheck` to those. The inherited `test/`, `script/`, and `doc/` trees still target the upstream `@earendil-works` API and the removed clipboard-subprocess design — they are NOT yet ported, so `npm test` / `npm run check` will fail until they are.
 
-When reviewing changes — including agent self-review before opening or merging a PR — follow `doc/review-guidelines.md`; its project-specific MUST-flag rules take precedence over general review heuristics.
+When adapting more behavior, prefer Oh My Pi's public `Editor` API (`setText`, `insertText`, `getLines`, `getCursor`, `moveTo*`) over reaching into editor internals — Oh My Pi keeps editor state private, so direct `state`/`cursorCol` access silently no-ops.
 
-npm publishing is automated in CI (`.github/workflows/publish.yml`): every push to `main` publishes the `package.json` version if it is not already on npm. Do not run `npm publish` or ask for publish access — to release, bump the version in `package.json`.
+There is no automated npm publishing in this fork.

@@ -3,14 +3,15 @@ import { spawn, spawnSync } from "node:child_process";
 import {
   CustomEditor,
   type ExtensionAPI,
-} from "@earendil-works/pi-coding-agent";
+} from "@oh-my-pi/pi-coding-agent";
+import { copyToClipboard } from "@oh-my-pi/pi-natives";
 import {
   CURSOR_MARKER,
   Key,
   matchesKey,
   truncateToWidth,
   visibleWidth,
-} from "@earendil-works/pi-tui";
+} from "@oh-my-pi/pi-tui";
 import {
   type ClipboardMirrorPolicy,
   DEFAULT_CLIPBOARD_MIRROR_POLICY,
@@ -109,7 +110,6 @@ type ModalEditorInternals = {
 type CustomEditorConstructorArgs = ConstructorParameters<typeof CustomEditor>;
 type ClipboardWriteFn = (text: string, signal: AbortSignal) => Promise<void>;
 type ClipboardReadFn = () => string | null;
-type ClipboardProcess = ReturnType<typeof spawn>;
 type ModeChangeCommandRunner = (command: string) => void;
 type RunningModeChangeCommand = {
   child: ReturnType<typeof spawn>;
@@ -316,55 +316,35 @@ function isClipboardEnvironmentFailure(error: unknown): boolean {
   return error instanceof ClipboardSpawnError || isNodeSpawnErrno(error);
 }
 
-const PI_CODING_AGENT_MODULE_URL = import.meta.resolve(
-  "@earendil-works/pi-coding-agent",
-);
-const CLIPBOARD_HELPER_SOURCE = `
-import { copyToClipboard } from ${JSON.stringify(PI_CODING_AGENT_MODULE_URL)};
-
-const chunks = [];
-for await (const chunk of process.stdin) {
-  chunks.push(typeof chunk === "string" ? Buffer.from(chunk) : chunk);
-}
-
-try {
-  await Promise.resolve(copyToClipboard(Buffer.concat(chunks).toString("utf8")));
-} catch {}
-`;
-
-const CLIPBOARD_READ_HELPER_SOURCE = `
-import { createRequire } from "node:module";
-
-const require = createRequire(${JSON.stringify(PI_CODING_AGENT_MODULE_URL)});
-const clipboard = require("@mariozechner/clipboard");
-if (!await clipboard.hasText()) {
-  process.exit(0);
-}
-const text = await clipboard.getText();
-if (typeof text === "string") {
-  process.stdout.write(text);
-}
-`;
-
-function readClipboardInChildProcess(): string | null {
-  try {
-    const result = spawnSync(
-      process.execPath,
-      ["--input-type=module", "-e", CLIPBOARD_READ_HELPER_SOURCE],
-      {
+function readSystemClipboard(): string | null {
+  let commands: Array<[string, string[]]>;
+  if (process.platform === "darwin") {
+    commands = [["pbpaste", []]];
+  } else if (process.platform === "win32") {
+    commands = [["powershell", ["-NoProfile", "-Command", "Get-Clipboard"]]];
+  } else {
+    commands = [
+      ["wl-paste", ["--no-newline"]],
+      ["xclip", ["-selection", "clipboard", "-o"]],
+      ["xsel", ["--clipboard", "--output"]],
+    ];
+  }
+  for (const [command, args] of commands) {
+    try {
+      const result = spawnSync(command, args, {
         encoding: "utf8",
         maxBuffer: CLIPBOARD_READ_MAX_BUFFER_BYTES,
         stdio: ["ignore", "pipe", "ignore"],
         timeout: CLIPBOARD_READ_TIMEOUT_MS,
         windowsHide: true,
-      },
-    );
-
-    if (result.error || result.status !== 0 || result.signal) return null;
-    return result.stdout ?? "";
-  } catch {
-    return null;
+      });
+      if (result.error || result.status !== 0 || result.signal) continue;
+      return result.stdout ?? "";
+    } catch {
+      // Try the next clipboard backend.
+    }
   }
+  return null;
 }
 
 function createClipboardAbortError(message: string): Error {
@@ -379,136 +359,21 @@ function getAbortError(signal: AbortSignal): Error {
     : createClipboardAbortError("clipboard write aborted");
 }
 
-function killClipboardProcess(child: ClipboardProcess): void {
-  if (child.exitCode !== null || child.signalCode !== null) return;
-
-  try {
-    child.kill("SIGKILL");
-  } catch {
-    return;
-  }
-}
-
-function writeClipboardInChildProcess(
+async function writeSystemClipboard(
   text: string,
   signal: AbortSignal,
 ): Promise<void> {
-  return new Promise<void>((resolve, reject) => {
+  if (signal.aborted) {
+    throw getAbortError(signal);
+  }
+  try {
+    await Promise.resolve(copyToClipboard(text));
+  } catch (error) {
     if (signal.aborted) {
-      reject(getAbortError(signal));
-      return;
+      throw getAbortError(signal);
     }
-
-    let child: ClipboardProcess | null = null;
-    let settled = false;
-    const stdoutChunks: Buffer[] = [];
-
-    function finish(error?: unknown): void {
-      if (settled) return;
-      settled = true;
-      signal.removeEventListener("abort", onAbort);
-      if (error) {
-        reject(error);
-      } else {
-        resolve();
-      }
-    }
-
-    function onAbort(): void {
-      if (child) {
-        killClipboardProcess(child);
-      }
-      finish(getAbortError(signal));
-    }
-
-    try {
-      child = spawn(
-        process.execPath,
-        ["--input-type=module", "-e", CLIPBOARD_HELPER_SOURCE],
-        {
-          stdio: ["pipe", "pipe", "ignore"],
-          windowsHide: true,
-        },
-      );
-    } catch (error) {
-      finish(
-        new ClipboardSpawnError("clipboard helper spawn failed", {
-          cause: error,
-        }),
-      );
-      return;
-    }
-
-    signal.addEventListener("abort", onAbort, { once: true });
-
-    child.stdout?.on("data", (chunk: Buffer | string) => {
-      stdoutChunks.push(typeof chunk === "string" ? Buffer.from(chunk) : chunk);
-    });
-    child.stdout?.on("error", (error) => {
-      finish(error);
-    });
-
-    child.once("error", (error) => {
-      finish(
-        new ClipboardSpawnError("clipboard helper spawn failed", {
-          cause: error,
-        }),
-      );
-    });
-
-    child.once("close", (code) => {
-      if (settled) return;
-
-      if (signal.aborted) {
-        finish(getAbortError(signal));
-        return;
-      }
-
-      if (code === 0) {
-        try {
-          for (const chunk of stdoutChunks) {
-            process.stdout.write(chunk);
-          }
-        } catch (error) {
-          finish(error);
-          return;
-        }
-        finish();
-        return;
-      }
-
-      finish(
-        new ClipboardSpawnError(
-          `clipboard helper failed with exit code ${code ?? "null"}`,
-        ),
-      );
-    });
-
-    if (!child.stdin) {
-      killClipboardProcess(child);
-      finish(new ClipboardSpawnError("clipboard helper stdin unavailable"));
-      return;
-    }
-
-    child.stdin.on("error", (error: NodeJS.ErrnoException) => {
-      if (signal.aborted) {
-        finish(getAbortError(signal));
-        return;
-      }
-
-      if (error.code === "EPIPE" || error.code === "ERR_STREAM_DESTROYED") {
-        return;
-      }
-
-      finish(error);
-    });
-
-    try {
-      child.stdin.end(text);
-    } catch (error) {
-      finish(error);
-    }
-  });
+    throw new ClipboardSpawnError("clipboard write failed", { cause: error });
+  }
 }
 
 class ClipboardMirror {
@@ -643,6 +508,7 @@ export class ModalEditor extends CustomEditor {
   private pendingEscWhileDiscardingBracketedPasteInNormalMode: boolean = false;
   private wordBoundaryCache = new WordBoundaryCache();
   private readonly redoStack: EditorSnapshot[] = [];
+  private readonly undoStack: EditorSnapshot[] = [];
   private currentTransition: TransitionState = "none";
   private onChangeHooked: boolean = false;
   private readonly labelColorizers: ModeColorizers | null;
@@ -656,20 +522,20 @@ export class ModalEditor extends CustomEditor {
   private clipboardMirrorPolicy: ClipboardMirrorPolicy =
     DEFAULT_CLIPBOARD_MIRROR_POLICY;
   private readonly clipboardMirror = new ClipboardMirror(
-    writeClipboardInChildProcess,
+    writeSystemClipboard,
   );
-  private clipboardReadFn: ClipboardReadFn = readClipboardInChildProcess;
+  private clipboardReadFn: ClipboardReadFn = readSystemClipboard;
   private quitFn: () => void = () => {};
   private notifyFn: (message: string) => void = () => {};
   private modeChangeFn: (mode: Mode, prevMode: Mode) => void = () => {};
 
   constructor(
-    tui: CustomEditorConstructorArgs[0],
-    theme: CustomEditorConstructorArgs[1],
-    kb: CustomEditorConstructorArgs[2],
+    tui: unknown,
+    theme: CustomEditorConstructorArgs[0],
+    _kb: unknown,
     opts?: ModalEditorOptions,
   ) {
-    super(tui, theme, kb);
+    super(theme);
     this.cursorShapeRuntime = getCursorShapeRuntime(tui);
     this.labelColorizers = opts?.labelColorizers ?? null;
     this.borderColorizers = opts?.borderColorizers ?? null;
@@ -742,6 +608,14 @@ export class ModalEditor extends CustomEditor {
 
   private setMode(mode: Mode = "insert"): void {
     const prev = this.mode;
+    if (
+      mode === "insert" &&
+      prev !== "insert" &&
+      this.currentTransition === "none"
+    ) {
+      this.undoStack.push(this.captureSnapshot());
+      this.clearRedoStack();
+    }
     this.mode = mode;
     if (prev !== mode) {
       try {
@@ -757,6 +631,12 @@ export class ModalEditor extends CustomEditor {
     super.setText(text);
   }
 
+  override submit(): void {
+    this.undoStack.length = 0;
+    this.redoStack.length = 0;
+    super.submit();
+  }
+
   private captureSnapshot(): EditorSnapshot {
     const cursor = this.getCursor();
     return {
@@ -765,48 +645,12 @@ export class ModalEditor extends CustomEditor {
     };
   }
 
-  private requireRedoRestoreState(editor: ModalEditorInternals): {
-    lines: string[];
-    cursorLine?: number;
-    cursorCol?: number;
-  } {
-    const state = editor.state;
-    if (!state || !Array.isArray(state.lines)) {
-      throw new Error("Redo restore prerequisite: editor state unavailable");
-    }
-    return state as {
-      lines: string[];
-      cursorLine?: number;
-      cursorCol?: number;
-    };
-  }
-
   private restoreSnapshot(snapshot: EditorSnapshot): void {
-    const editor = this as unknown as ModalEditorInternals;
-    const state = this.requireRedoRestoreState(editor);
-
-    const lines = snapshot.text.split("\n");
-    state.lines = lines.length > 0 ? lines : [""];
-
-    const maxLine = Math.max(0, state.lines.length - 1);
-    const cursorLine = Math.max(0, Math.min(snapshot.cursor.line, maxLine));
-    const line = state.lines[cursorLine] ?? "";
-    const cursorCol = Math.max(0, Math.min(snapshot.cursor.col, line.length));
-
-    state.cursorLine = cursorLine;
-    if (typeof editor.setCursorCol === "function") {
-      editor.setCursorCol(cursorCol);
-    } else {
-      state.cursorCol = cursorCol;
-      editor.preferredVisualCol = null;
-    }
-
+    super.setText(snapshot.text);
+    this.moveCursorToAbsoluteIndex(
+      this.getAbsoluteIndex(snapshot.cursor.line, snapshot.cursor.col),
+    );
     this.invalidateWordBoundaryCache();
-
-    editor.historyIndex = -1;
-    editor.lastAction = null;
-    editor.onChange?.(this.getText());
-    editor.tui?.requestRender?.();
   }
 
   private snapshotChanged(a: EditorSnapshot, b: EditorSnapshot): boolean {
@@ -833,39 +677,23 @@ export class ModalEditor extends CustomEditor {
   private performUndo(count: number = this.takeTotalCount(1)): void {
     const maxSteps = Math.max(1, Math.min(MAX_COUNT, count));
     for (let i = 0; i < maxSteps; i++) {
-      let changed = false;
+      const snapshot = this.undoStack.pop();
+      if (!snapshot) break;
       this.withTransition("undo", () => {
-        const beforeUndo = this.captureSnapshot();
-        super.handleInput(CTRL_UNDERSCORE);
-        const afterUndo = this.captureSnapshot();
-
-        if (this.snapshotChanged(beforeUndo, afterUndo)) {
-          this.redoStack.push(beforeUndo);
-          changed = true;
-        }
+        this.redoStack.push(this.captureSnapshot());
+        this.restoreSnapshot(snapshot);
       });
-      if (!changed) break;
     }
   }
 
   private performRedo(count: number = this.takeTotalCount(1)): void {
     const maxSteps = Math.max(1, Math.min(MAX_COUNT, count));
-    const editor = this as unknown as ModalEditorInternals;
-
     for (let i = 0; i < maxSteps; i++) {
-      const snapshot = this.redoStack[this.redoStack.length - 1];
+      const snapshot = this.redoStack.pop();
       if (!snapshot) break;
-
       this.withTransition("redo", () => {
-        this.requireRedoRestoreState(editor);
-        if (typeof editor.pushUndoSnapshot !== "function") {
-          throw new Error(
-            "Redo restore prerequisite: pushUndoSnapshot unavailable",
-          );
-        }
-        editor.pushUndoSnapshot();
+        this.undoStack.push(this.captureSnapshot());
         this.restoreSnapshot(snapshot);
-        this.redoStack.pop();
       });
     }
   }
@@ -896,46 +724,6 @@ export class ModalEditor extends CustomEditor {
     if (this.redoStack.length === 0) return;
     if (this.currentTransition !== "none") return;
     this.clearRedoStack();
-  }
-
-  private applySyntheticEdit(mutation: () => void): void {
-    const editor = this as unknown as ModalEditorInternals;
-    if (!editor.state || !Array.isArray(editor.state.lines)) {
-      throw new Error("Synthetic edit prerequisite: editor state unavailable");
-    }
-
-    if (typeof editor.pushUndoSnapshot !== "function") {
-      throw new Error(
-        "Synthetic edit prerequisite: pushUndoSnapshot unavailable",
-      );
-    }
-
-    const textBefore = this.getText();
-    const preCursorLine = editor.state.cursorLine;
-    const preCursorCol = editor.state.cursorCol;
-
-    mutation();
-
-    if (this.getText() === textBefore) return;
-
-    const postLines = editor.state.lines.slice();
-    const postCursorLine = editor.state.cursorLine;
-    const postCursorCol = editor.state.cursorCol;
-    const postPreferredCol = editor.preferredVisualCol;
-
-    const preLines = textBefore.split("\n");
-    editor.state.lines = preLines.length > 0 ? preLines : [""];
-    editor.state.cursorLine = preCursorLine;
-    editor.state.cursorCol = preCursorCol;
-    editor.pushUndoSnapshot();
-
-    editor.state.lines = postLines;
-    editor.state.cursorLine = postCursorLine;
-    editor.state.cursorCol = postCursorCol;
-    editor.preferredVisualCol = postPreferredCol;
-
-    editor.onChange?.(this.getText());
-    editor.tui?.requestRender?.();
   }
 
   private startPendingExCommand(): void {
@@ -2192,61 +1980,20 @@ export class ModalEditor extends CustomEditor {
   }
 
   private moveCursorToCol(col: number): void {
-    const editor = this as unknown as {
-      state?: { lines?: string[]; cursorLine?: number; cursorCol?: number };
-      preferredVisualCol?: number | null;
-      lastAction?: string | null;
-      tui?: { requestRender?: () => void };
-    };
-
-    const state = editor.state;
-    if (!state || !Array.isArray(state.lines)) return;
-
-    editor.lastAction = null;
-    state.cursorCol = col;
-    editor.preferredVisualCol = col;
-    editor.tui?.requestRender?.();
+    const cursor = this.getCursor();
+    this.moveCursorToAbsoluteIndex(this.getAbsoluteIndex(cursor.line, col));
   }
 
   private moveCursorToAbsoluteIndex(abs: number): void {
-    const editor = this as unknown as {
-      state?: { lines?: string[]; cursorLine?: number; cursorCol?: number };
-      preferredVisualCol?: number | null;
-      lastAction?: string | null;
-      tui?: { requestRender?: () => void };
-    };
-
-    const state = editor.state;
-    if (!state || !Array.isArray(state.lines)) return;
-
     const { line, col } = this.getCursorFromAbsoluteIndex(this.getText(), abs);
-    editor.lastAction = null;
-    state.cursorLine = line;
-    state.cursorCol = col;
-    editor.preferredVisualCol = col;
-    editor.tui?.requestRender?.();
+    this.moveToMessageStart();
+    for (let i = 0; i < line; i++) super.handleInput(ESC_DOWN);
+    this.moveToLineStart();
+    for (let i = 0; i < col; i++) super.handleInput(ESC_RIGHT);
   }
 
   private moveCursorToLineStart(lineIndex: number): void {
-    const editor = this as unknown as {
-      state?: { lines?: string[]; cursorLine?: number; cursorCol?: number };
-      preferredVisualCol?: number | null;
-      lastAction?: string | null;
-      tui?: { requestRender?: () => void };
-    };
-
-    const state = editor.state;
-    if (!state || !Array.isArray(state.lines) || state.lines.length === 0) {
-      super.handleInput(CTRL_A);
-      return;
-    }
-
-    const targetLine = Math.max(0, Math.min(lineIndex, state.lines.length - 1));
-    editor.lastAction = null;
-    state.cursorLine = targetLine;
-    state.cursorCol = 0;
-    editor.preferredVisualCol = null;
-    editor.tui?.requestRender?.();
+    this.moveCursorToAbsoluteIndex(this.getAbsoluteIndex(lineIndex, 0));
   }
 
   private moveCursorToFirstNonWhitespace(): void {
@@ -2265,43 +2012,39 @@ export class ModalEditor extends CustomEditor {
     const steps = Math.max(0, count - 1);
     if (steps === 0) return;
 
-    this.applySyntheticEdit(() => {
-      const editor = this as unknown as ModalEditorInternals;
-      const state = editor.state;
-      if (!state || !Array.isArray(state.lines)) return;
+    const working = this.getLines().slice();
+    const currentLine = this.getCursor().line;
+    let joinPoint = this.getCursor().col;
 
-      const currentLine = state.cursorLine ?? 0;
-      let joinPoint = state.cursorCol ?? 0;
+    for (let i = 0; i < steps; i++) {
+      if (currentLine >= working.length - 1) break;
 
-      for (let i = 0; i < steps; i++) {
-        if (currentLine >= state.lines.length - 1) break;
+      const left = working[currentLine] ?? "";
+      const right = working[currentLine + 1] ?? "";
+      let joined: string;
 
-        const left = state.lines[currentLine] ?? "";
-        const right = state.lines[currentLine + 1] ?? "";
-        let joined: string;
-
-        if (normalize) {
-          const trimmedRight = right.trimStart();
-          const leftLastChar = left[left.length - 1];
-          const leftEndsWithSpace =
-            leftLastChar !== undefined && /\s/.test(leftLastChar);
-          const needsSeparator = !leftEndsWithSpace && trimmedRight.length > 0;
-          joined = needsSeparator
-            ? `${left} ${trimmedRight}`
-            : left + trimmedRight;
-          joinPoint = left.length;
-        } else {
-          joined = left + right;
-          joinPoint = left.length;
-        }
-
-        state.lines.splice(currentLine, 2, joined);
+      if (normalize) {
+        const trimmedRight = right.trimStart();
+        const leftLastChar = left[left.length - 1];
+        const leftEndsWithSpace =
+          leftLastChar !== undefined && /\s/.test(leftLastChar);
+        const needsSeparator = !leftEndsWithSpace && trimmedRight.length > 0;
+        joined = needsSeparator
+          ? `${left} ${trimmedRight}`
+          : left + trimmedRight;
+        joinPoint = left.length;
+      } else {
+        joined = left + right;
+        joinPoint = left.length;
       }
 
-      state.cursorLine = currentLine;
-      state.cursorCol = joinPoint;
-      editor.preferredVisualCol = joinPoint;
-    });
+      working.splice(currentLine, 2, joined);
+    }
+
+    this.replaceTextInBuffer(
+      working.join("\n"),
+      this.getAbsoluteIndex(currentLine, joinPoint),
+    );
   }
 
   private isWordChar(ch: string): boolean {
@@ -3102,32 +2845,13 @@ export class ModalEditor extends CustomEditor {
   }
 
   private replaceTextInBuffer(text: string, cursorAbs: number): void {
-    const editor = this as unknown as {
-      state?: { lines?: string[]; cursorLine?: number; cursorCol?: number };
-      preferredVisualCol?: number | null;
-      historyIndex?: number;
-      lastAction?: string | null;
-      onChange?: (text: string) => void;
-      tui?: { requestRender?: () => void };
-      pushUndoSnapshot?: () => void;
-      autocompleteState?: unknown;
-      updateAutocomplete?: () => void;
-    };
-    const state = editor.state;
-    if (!state) return;
-    const currentText = this.getText();
-    if (currentText !== text) editor.pushUndoSnapshot?.();
-    const nextLines = text.length === 0 ? [""] : text.split("\n");
-    const { line, col } = this.getCursorFromAbsoluteIndex(text, cursorAbs);
-    editor.historyIndex = -1;
-    editor.lastAction = null;
-    state.lines = nextLines;
-    state.cursorLine = line;
-    state.cursorCol = col;
-    editor.preferredVisualCol = null;
-    editor.onChange?.(text);
-    if (editor.autocompleteState) editor.updateAutocomplete?.();
-    editor.tui?.requestRender?.();
+    if (this.getText() !== text) {
+      if (this.currentTransition === "none") {
+        this.undoStack.push(this.captureSnapshot());
+      }
+      this.setText(text);
+    }
+    this.moveCursorToAbsoluteIndex(cursorAbs);
   }
 
   private deleteRangeByAbsolute(
@@ -3346,7 +3070,7 @@ export class ModalEditor extends CustomEditor {
   }
 
   render(width: number): string[] {
-    const lines = super.render(width);
+    const lines = [...super.render(width)];
     this.syncCursorShapeForRender(lines);
     if (lines.length === 0) return lines;
 
@@ -3535,7 +3259,7 @@ export default function (pi: ExtensionAPI) {
         : null;
     const modeChangeHandler = createModeChangeHandler(
       piVimSettings.modeChange,
-      (event) => pi.events.emit("pi-vim:mode-change", event),
+      (event) => pi.events.emit("omp-vim:mode-change", event),
     );
     ctx.ui.setEditorComponent((tui, theme, kb) => {
       cursorShapeCleanup = enableCursorShapeSupport(tui);
@@ -3551,9 +3275,9 @@ export default function (pi: ExtensionAPI) {
     });
   });
 
-  pi.on("session_shutdown", (event) => {
+  pi.on("session_shutdown", (_event) => {
     try {
-      cursorShapeCleanup?.(event);
+      cursorShapeCleanup?.({ reason: "quit" });
     } finally {
       cancelModeChangeCommands();
       cursorShapeCleanup = null;
