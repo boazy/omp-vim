@@ -116,6 +116,12 @@ type RunningModeChangeCommand = {
   timeout: ReturnType<typeof setTimeout>;
 };
 type ModeChangeEvent = { mode: Mode; previousMode: Mode };
+type SurroundState =
+  | { op: "d" }
+  | { op: "c"; target: string | null }
+  | { op: "y"; stage: "motion" }
+  | { op: "y"; stage: "textobject"; kind: TextObjectKind }
+  | { op: "y"; stage: "char"; startAbs: number; endAbs: number };
 
 type ModeColorKey = keyof typeof MODE_COLORS;
 type ModeColorizers = Record<ModeColorKey, (s: string) => string>;
@@ -503,6 +509,9 @@ export class ModalEditor extends CustomEditor {
   private pendingExCommand: string | null = null;
   private acceptingBracketedPasteInExCommand: boolean = false;
   private pendingEscWhileAcceptingBracketedPasteInExCommand: boolean = false;
+  private visualAnchor: number | null = null;
+  private visualReplacePending: boolean = false;
+  private surround: SurroundState | null = null;
   private lastCharMotion: LastCharMotion | null = null;
   private discardingBracketedPasteInNormalMode: boolean = false;
   private pendingEscWhileDiscardingBracketedPasteInNormalMode: boolean = false;
@@ -584,8 +593,9 @@ export class ModalEditor extends CustomEditor {
     return this.getLines().join("\n");
   }
 
-  private getActiveMode(): Mode | "ex" {
+  private getActiveMode(): ModeColorKey {
     if (this.pendingExCommand !== null) return "ex";
+    if (this.mode === "visual" || this.mode === "visualLine") return "normal";
     return this.mode;
   }
 
@@ -991,6 +1001,14 @@ export class ModalEditor extends CustomEditor {
       return;
     }
 
+    if (this.surround !== null) {
+      this.handleSurroundInput(data);
+      return;
+    }
+    if (this.mode === "visual" || this.mode === "visualLine") {
+      this.handleVisualMode(data);
+      return;
+    }
     this.handleNormalMode(data);
   }
 
@@ -1029,6 +1047,14 @@ export class ModalEditor extends CustomEditor {
       this.pendingReplace
     ) {
       this.clearPendingState();
+      return;
+    }
+    if (this.surround !== null) {
+      this.surround = null;
+      return;
+    }
+    if (this.mode === "visual" || this.mode === "visualLine") {
+      this.exitVisualToNormal();
       return;
     }
     if ("insert" === this.mode) {
@@ -1295,7 +1321,7 @@ export class ModalEditor extends CustomEditor {
         count,
         semanticClass,
       );
-      if (!range || !this.pendingOperator) {
+      if (!range) {
         this.pendingOperator = null;
         return;
       }
@@ -1326,6 +1352,10 @@ export class ModalEditor extends CustomEditor {
   private applyResolvedTextObjectRange(range: TextObjectRange): void {
     const pendingOperator = this.pendingOperator;
     this.pendingOperator = null;
+    if (this.mode === "visual" || this.mode === "visualLine") {
+      this.setVisualSelectionRange(range);
+      return;
+    }
 
     if (!pendingOperator || range.endAbs < range.startAbs) return;
 
@@ -1355,6 +1385,11 @@ export class ModalEditor extends CustomEditor {
 
   private handlePendingDelete(data: string): void {
     if (this.opDigit(data)) return;
+    if (data === "s") {
+      this.pendingOperator = null;
+      this.surround = { op: "d" };
+      return;
+    }
 
     if (data === "%") {
       this.applyPercentOp();
@@ -1432,6 +1467,11 @@ export class ModalEditor extends CustomEditor {
 
   private handlePendingChange(data: string): void {
     if (this.opDigit(data)) return;
+    if (data === "s") {
+      this.pendingOperator = null;
+      this.surround = { op: "c", target: null };
+      return;
+    }
 
     if (data === "%") {
       this.applyPercentOp();
@@ -1585,6 +1625,7 @@ export class ModalEditor extends CustomEditor {
         data === CTRL_UNDERSCORE ||
         matchesKey(data, "ctrl+_") ||
         data === CTRL_R ||
+        data === "U" ||
         matchesKey(data, "ctrl+r");
       const supportsCountedCharMotion =
         CHAR_MOTION_KEYS.has(data) || data === ";" || data === ",";
@@ -1660,6 +1701,16 @@ export class ModalEditor extends CustomEditor {
       return;
     }
 
+    if (data === "v") {
+      this.enterVisual("visual");
+      return;
+    }
+
+    if (data === "V") {
+      this.enterVisual("visualLine");
+      return;
+    }
+
     if (data === "d") {
       this.pendingOperator = "d";
       return;
@@ -1722,7 +1773,7 @@ export class ModalEditor extends CustomEditor {
       return;
     }
 
-    if (data === CTRL_R || matchesKey(data, "ctrl+r")) {
+    if (data === CTRL_R || matchesKey(data, "ctrl+r") || data === "U") {
       this.performRedo();
       return;
     }
@@ -1783,6 +1834,428 @@ export class ModalEditor extends CustomEditor {
 
     if (this.isPrintableChunk(data)) return;
     super.handleInput(data);
+  }
+
+  private enterVisual(target: "visual" | "visualLine"): void {
+    this.visualAnchor = this.getAbsoluteIndexFromCursor();
+    this.setMode(target);
+  }
+
+  private exitVisualToNormal(): void {
+    this.visualAnchor = null;
+    this.visualReplacePending = false;
+    this.setMode("normal");
+  }
+
+  private getVisualRange(): { startAbs: number; endAbs: number } {
+    const cursorAbs = this.getAbsoluteIndexFromCursor();
+    const anchor = this.visualAnchor ?? cursorAbs;
+    const text = this.getText();
+    const startAbs = Math.max(0, Math.min(anchor, cursorAbs));
+    const endAbs = Math.min(Math.max(anchor, cursorAbs) + 1, text.length);
+    return { startAbs, endAbs };
+  }
+
+  private getVisualLineRange(): { startLine: number; endLine: number } {
+    const text = this.getText();
+    const cursorAbs = this.getAbsoluteIndexFromCursor();
+    const anchor = this.visualAnchor ?? cursorAbs;
+    const a = this.getCursorFromAbsoluteIndex(text, Math.min(anchor, cursorAbs));
+    const b = this.getCursorFromAbsoluteIndex(text, Math.max(anchor, cursorAbs));
+    return { startLine: a.line, endLine: b.line };
+  }
+
+  private visualLineAbsRange(): { startAbs: number; endAbs: number } {
+    const { startLine, endLine } = this.getVisualLineRange();
+    const lines = this.getLines();
+    return {
+      startAbs: this.getAbsoluteIndex(startLine, 0),
+      endAbs: this.getAbsoluteIndex(endLine, (lines[endLine] ?? "").length),
+    };
+  }
+
+  private setVisualSelectionRange(range: TextObjectRange): void {
+    if (range.endAbs <= range.startAbs) {
+      this.moveCursorToAbsoluteIndex(range.startAbs);
+      return;
+    }
+    this.visualAnchor = range.startAbs;
+    this.moveCursorToAbsoluteIndex(range.endAbs - 1);
+  }
+
+  private swapVisualEnds(): void {
+    if (this.visualAnchor === null) return;
+    const cursorAbs = this.getAbsoluteIndexFromCursor();
+    this.moveCursorToAbsoluteIndex(this.visualAnchor);
+    this.visualAnchor = cursorAbs;
+  }
+
+  private deleteVisualSelection(): void {
+    if (this.mode === "visualLine") {
+      const { startLine, endLine } = this.getVisualLineRange();
+      this.exitVisualToNormal();
+      this.deleteLineRange(startLine, endLine);
+      return;
+    }
+    const { startAbs, endAbs } = this.getVisualRange();
+    this.exitVisualToNormal();
+    this.deleteRangeByAbsolute(startAbs, endAbs, false);
+  }
+
+  private yankVisualSelection(): void {
+    if (this.mode === "visualLine") {
+      const { startLine, endLine } = this.getVisualLineRange();
+      const startAbs = this.getAbsoluteIndex(startLine, 0);
+      this.exitVisualToNormal();
+      this.yankLineRange(startLine, endLine);
+      this.moveCursorToAbsoluteIndex(startAbs);
+      return;
+    }
+    const { startAbs, endAbs } = this.getVisualRange();
+    this.exitVisualToNormal();
+    this.yankRangeByAbsolute(startAbs, endAbs);
+    this.moveCursorToAbsoluteIndex(startAbs);
+  }
+
+  private changeVisualSelection(): void {
+    if (this.mode === "visualLine") {
+      const { startLine, endLine } = this.getVisualLineRange();
+      const lines = this.getLines();
+      const before = lines.slice(0, startLine);
+      const after = lines.slice(endLine + 1);
+      this.writeToRegister(this.getLinewisePayload(startLine, endLine));
+      const cursorAbs = this.getAbsoluteIndex(before.length, 0);
+      this.exitVisualToNormal();
+      this.replaceTextInBuffer([...before, "", ...after].join("\n"), cursorAbs);
+      this.setMode("insert");
+      return;
+    }
+    const { startAbs, endAbs } = this.getVisualRange();
+    this.exitVisualToNormal();
+    this.deleteRangeByAbsolute(startAbs, endAbs, false);
+    this.setMode("insert");
+  }
+
+  private putOverVisualSelection(): void {
+    const register = this.getPasteRegisterText();
+    if (this.mode === "visualLine") {
+      const { startLine, endLine } = this.getVisualLineRange();
+      const lines = this.getLines();
+      const before = lines.slice(0, startLine);
+      const after = lines.slice(endLine + 1);
+      this.writeToRegister(this.getLinewisePayload(startLine, endLine));
+      const body = register.endsWith("\n") ? register.slice(0, -1) : register;
+      const regLines = body.length === 0 ? [""] : body.split("\n");
+      const cursorAbs = this.getAbsoluteIndex(before.length, 0);
+      this.exitVisualToNormal();
+      this.replaceTextInBuffer(
+        [...before, ...regLines, ...after].join("\n"),
+        cursorAbs,
+      );
+      return;
+    }
+    const { startAbs, endAbs } = this.getVisualRange();
+    const text = this.getText();
+    this.writeToRegister(text.slice(startAbs, endAbs));
+    const insertText = register.endsWith("\n") ? register.slice(0, -1) : register;
+    const cursorAbs = startAbs + Math.max(0, insertText.length - 1);
+    this.exitVisualToNormal();
+    this.replaceTextInBuffer(
+      text.slice(0, startAbs) + insertText + text.slice(endAbs),
+      cursorAbs,
+    );
+  }
+
+  private replaceVisualSelection(char: string): void {
+    const { startAbs, endAbs } = this.getVisualRange();
+    const text = this.getText();
+    const replaced = text.slice(startAbs, endAbs).replace(/[^\n]/g, char);
+    this.exitVisualToNormal();
+    this.replaceTextInBuffer(
+      text.slice(0, startAbs) + replaced + text.slice(endAbs),
+      startAbs,
+    );
+  }
+
+  private beginVisualSurround(): void {
+    const range =
+      this.mode === "visualLine"
+        ? this.visualLineAbsRange()
+        : this.getVisualRange();
+    this.exitVisualToNormal();
+    this.surround = {
+      op: "y",
+      stage: "char",
+      startAbs: range.startAbs,
+      endAbs: range.endAbs,
+    };
+  }
+
+  private handleVisualMode(data: string): void {
+    if (this.visualReplacePending) {
+      this.visualReplacePending = false;
+      if (this.isPrintableInput(data)) this.replaceVisualSelection(data);
+      return;
+    }
+
+    if (data === CTRL_R || matchesKey(data, "ctrl+r")) {
+      this.exitVisualToNormal();
+      this.performRedo();
+      return;
+    }
+
+    switch (data) {
+      case "v":
+        if (this.mode === "visual") this.exitVisualToNormal();
+        else this.setMode("visual");
+        return;
+      case "V":
+        if (this.mode === "visualLine") this.exitVisualToNormal();
+        else this.setMode("visualLine");
+        return;
+      case "o":
+      case "O":
+        this.swapVisualEnds();
+        return;
+      case "d":
+      case "x":
+      case "X":
+      case "D":
+        this.deleteVisualSelection();
+        return;
+      case "c":
+      case "s":
+      case "C":
+      case "R":
+        this.changeVisualSelection();
+        return;
+      case "y":
+      case "Y":
+        this.yankVisualSelection();
+        return;
+      case "p":
+      case "P":
+        this.putOverVisualSelection();
+        return;
+      case "r":
+        this.visualReplacePending = true;
+        return;
+      case "S":
+        this.beginVisualSurround();
+        return;
+      case "i":
+      case "a":
+        this.pendingTextObject = data;
+        return;
+      case "A":
+      case "I":
+        return;
+      case "u":
+        this.exitVisualToNormal();
+        this.performUndo();
+        return;
+      case "U":
+        this.exitVisualToNormal();
+        this.performRedo();
+        return;
+    }
+
+    this.handleNormalMode(data);
+  }
+
+  private surroundPair(ch: string): [string, string] | null {
+    switch (ch) {
+      case "(":
+      case ")":
+      case "b":
+        return ["(", ")"];
+      case "{":
+      case "}":
+      case "B":
+        return ["{", "}"];
+      case "[":
+      case "]":
+      case "r":
+        return ["[", "]"];
+      case "<":
+      case ">":
+      case "a":
+        return ["<", ">"];
+      case '"':
+        return ['"', '"'];
+      case "'":
+        return ["'", "'"];
+      case "`":
+        return ["`", "`"];
+      default:
+        return null;
+    }
+  }
+
+  private surroundOpenPadding(ch: string): string {
+    return ch === "(" || ch === "[" || ch === "{" || ch === "<" ? " " : "";
+  }
+
+  private resolveSurroundTarget(
+    target: string,
+  ): { aStart: number; aEnd: number; iStart: number; iEnd: number } | null {
+    const text = this.getText();
+    const cursorAbs = this.getDelimitedTextObjectCursorAbs();
+    const outer = resolveDelimitedTextObjectRange(text, cursorAbs, "a", target);
+    const inner = resolveDelimitedTextObjectRange(text, cursorAbs, "i", target);
+    if (!outer || !inner) return null;
+    return {
+      aStart: outer.startAbs,
+      aEnd: outer.endAbs,
+      iStart: inner.startAbs,
+      iEnd: inner.endAbs,
+    };
+  }
+
+  private applySurroundDelete(target: string): void {
+    const r = this.resolveSurroundTarget(target);
+    if (!r) return;
+    const text = this.getText();
+    const inner = text.slice(r.iStart, r.iEnd);
+    this.replaceTextInBuffer(
+      text.slice(0, r.aStart) + inner + text.slice(r.aEnd),
+      r.aStart,
+    );
+  }
+
+  private applySurroundChange(target: string, replacement: string): void {
+    const pair = this.surroundPair(replacement);
+    if (!pair) return;
+    const r = this.resolveSurroundTarget(target);
+    if (!r) return;
+    const text = this.getText();
+    const inner = text.slice(r.iStart, r.iEnd);
+    const pad = this.surroundOpenPadding(replacement);
+    this.replaceTextInBuffer(
+      text.slice(0, r.aStart) +
+        pair[0] +
+        pad +
+        inner +
+        pad +
+        pair[1] +
+        text.slice(r.aEnd),
+      r.aStart,
+    );
+  }
+
+  private applySurroundAdd(
+    startAbs: number,
+    endAbs: number,
+    char: string,
+  ): void {
+    const pair = this.surroundPair(char);
+    if (!pair) return;
+    const text = this.getText();
+    const content = text.slice(startAbs, endAbs);
+    const pad = this.surroundOpenPadding(char);
+    this.replaceTextInBuffer(
+      text.slice(0, startAbs) +
+        pair[0] +
+        pad +
+        content +
+        pad +
+        pair[1] +
+        text.slice(endAbs),
+      startAbs + pair[0].length + pad.length,
+    );
+  }
+
+  private resolveSurroundObjectRange(
+    kind: TextObjectKind,
+    key: string,
+  ): { startAbs: number; endAbs: number } | null {
+    if (key === "w" || key === "W") {
+      const range = this.getWordObjectRange(
+        kind,
+        1,
+        key === "W" ? "WORD" : "word",
+      );
+      return range ? { startAbs: range.startAbs, endAbs: range.endAbs } : null;
+    }
+    const range = resolveDelimitedTextObjectRange(
+      this.getText(),
+      this.getDelimitedTextObjectCursorAbs(),
+      kind,
+      key,
+    );
+    return range ? { startAbs: range.startAbs, endAbs: range.endAbs } : null;
+  }
+
+  private handleSurroundInput(data: string): void {
+    const state = this.surround;
+    if (!state) return;
+
+    if (state.op === "d") {
+      this.surround = null;
+      this.applySurroundDelete(data);
+      return;
+    }
+
+    if (state.op === "c") {
+      if (state.target === null) {
+        state.target = data;
+        return;
+      }
+      this.surround = null;
+      this.applySurroundChange(state.target, data);
+      return;
+    }
+
+    if (state.stage === "char") {
+      this.surround = null;
+      this.applySurroundAdd(state.startAbs, state.endAbs, data);
+      return;
+    }
+
+    if (state.stage === "textobject") {
+      const range = this.resolveSurroundObjectRange(state.kind, data);
+      this.surround = range
+        ? {
+            op: "y",
+            stage: "char",
+            startAbs: range.startAbs,
+            endAbs: range.endAbs,
+          }
+        : null;
+      return;
+    }
+
+    if (data === "s") {
+      const line = this.getCursor().line;
+      this.surround = {
+        op: "y",
+        stage: "char",
+        startAbs: this.getAbsoluteIndex(line, 0),
+        endAbs: this.getAbsoluteIndex(
+          line,
+          (this.getLines()[line] ?? "").length,
+        ),
+      };
+      return;
+    }
+    if (data === "i" || data === "a") {
+      this.surround = { op: "y", stage: "textobject", kind: data };
+      return;
+    }
+    if (data === "$") {
+      const cursor = this.getCursor();
+      this.surround = {
+        op: "y",
+        stage: "char",
+        startAbs: this.getAbsoluteIndexFromCursor(),
+        endAbs: this.getAbsoluteIndex(
+          cursor.line,
+          (this.getLines()[cursor.line] ?? "").length,
+        ),
+      };
+      return;
+    }
+    this.surround = null;
   }
 
   private openLineBelow(): void {
@@ -2657,6 +3130,11 @@ export class ModalEditor extends CustomEditor {
 
   private handlePendingYank(data: string): void {
     if (this.opDigit(data)) return;
+    if (data === "s") {
+      this.pendingOperator = null;
+      this.surround = { op: "y", stage: "motion" };
+      return;
+    }
 
     if (data === "%") {
       this.applyPercentOp();
@@ -3070,7 +3548,7 @@ export class ModalEditor extends CustomEditor {
   }
 
   render(width: number): string[] {
-    const lines = [...super.render(width)];
+    const lines = this.renderContentLines(width);
     this.syncCursorShapeForRender(lines);
     if (lines.length === 0) return lines;
 
@@ -3095,12 +3573,60 @@ export class ModalEditor extends CustomEditor {
     return lines;
   }
 
+  private renderContentLines(width: number): string[] {
+    const range =
+      this.mode === "visual" || this.mode === "visualLine"
+        ? this.getSelectionHighlightRange()
+        : null;
+    if (!range) return [...super.render(width)];
+
+    const text = this.getText();
+    const cursorAbs = this.getAbsoluteIndexFromCursor();
+    const previous = this.decorateText;
+    let abs = 0;
+    this.decorateText = (segment: string): string => {
+      while (abs < text.length && (text[abs] === "\n" || abs === cursorAbs)) {
+        abs++;
+      }
+      if (text.slice(abs, abs + segment.length) !== segment) return segment;
+      const start = abs;
+      abs += segment.length;
+      const hs = Math.max(start, range.start) - start;
+      const he = Math.min(start + segment.length, range.end) - start;
+      if (he <= hs) return segment;
+      return (
+        segment.slice(0, hs) +
+        "\x1b[7m" +
+        segment.slice(hs, he) +
+        "\x1b[27m" +
+        segment.slice(he)
+      );
+    };
+    try {
+      return [...super.render(width)];
+    } finally {
+      this.decorateText = previous;
+    }
+  }
+
+  private getSelectionHighlightRange(): { start: number; end: number } | null {
+    if (this.visualAnchor === null) return null;
+    if (this.mode === "visualLine") {
+      const r = this.visualLineAbsRange();
+      return { start: r.startAbs, end: r.endAbs };
+    }
+    const r = this.getVisualRange();
+    return { start: r.startAbs, end: r.endAbs };
+  }
+
   private getModeLabelColorizer(): ((s: string) => string) | null {
     return this.labelColorizers?.[this.getActiveMode()] ?? null;
   }
 
   private getModeLabel(): string {
     if ("insert" === this.mode) return " INSERT ";
+    if (this.mode === "visual") return " VISUAL ";
+    if (this.mode === "visualLine") return " V-LINE ";
     if (this.pendingExCommand !== null) return ` EX ${this.pendingExCommand}_ `;
 
     const prefixCount = this.prefixCount;

@@ -32,6 +32,29 @@ Changes from upstream `pi-vim` required to run on Oh My Pi's compiled binary and
 
 Known limitations: initial insert-mode typing (before the first `Esc`) is not undoable; `cw` includes the trailing space; the inherited test suite still targets the upstream API and is not yet ported.
 
+## Additions beyond pi-vim
+
+Features this fork adds on top of upstream pi-vim:
+
+### Visual mode
+
+- `v` charwise, `V` linewise. The selection is highlighted and the block cursor marks the active end.
+- Motions extend the selection (`h/j/k/l`, `w/b/e/W/B/E`, `0/$/^`, `gg/G`, `f/t/;/,`, `%`, `{/}`); `o` swaps the active end.
+- Text objects select their range: `iw/aw/iW/aW` and quote/bracket objects (`i"`, `a(`, `ab`, `aB`, …).
+- Operators act on the selection: `d`/`x` delete, `c`/`s` change, `y` yank, `p`/`P` replace with the register, `r{char}` replace every selected char, `S{char}` surround the selection. `Esc` returns to normal mode.
+
+### surround.vim (subset)
+
+- `ds{target}` — delete the surrounding pair (e.g. `ds"` on `"hello"` → `hello`).
+- `cs{target}{replacement}` — change the surrounding pair (e.g. `cs'"` on `'hello'` → `"hello"`).
+- `ys{textobject}{char}` — add a surrounding pair around a text object (e.g. `ysiw)` wraps the word in parens; `yss"` wraps the whole line).
+
+Targets/replacements: `( ) b`, `{ } B`, `[ ] r`, `< >`, `"`, `'`, `` ` ``. Opening brackets (`( [ { <`) add inner spaces (`( x )`); closing forms and letters are tight (`(x)`). `ys` supports text objects (`iw`/`aw`/`i"`/…), `yss` (whole line), and `$`.
+
+### Redo
+
+`U` is a redo alias alongside `Ctrl-R`.
+
 ## configure
 
 Settings are read from `~/.omp/agent/settings.json` and project `.omp/settings.json` under the `ompVim` key (the legacy `piVim` key is still accepted).
