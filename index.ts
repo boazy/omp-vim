@@ -1227,20 +1227,6 @@ export class ModalEditor extends CustomEditor {
       // word boundary the user is still typing at is not eaten mid-flow;
       // the next non-whitespace insertion triggers it.
       if (!endedWithWhitespace) {
-        // A whitespace-free overflowing current line (a hard-split word
-        // mid-typing) must use the line break, not the paragraph fill: the
-        // fill would glue the following chunk to the continuation with a
-        // space. The cursor sits inside that word, so its line has no
-        // separator to normalize.
-        const cursor = this.getCursor();
-        const line = this.getLines()[cursor.line] ?? "";
-        const lineOverflows =
-          visibleWidth(line) > this.effectiveTextWidth;
-        const lineIsWhitespaceFree = !/\s/.test(line);
-        if (lineOverflows && lineIsWhitespaceFree) {
-          this.wrapCurrentLineIfNeeded();
-          return;
-        }
         this.reflowParagraphAroundCursor();
       }
       return;
@@ -1319,6 +1305,18 @@ export class ModalEditor extends CustomEditor {
       (l) => visibleWidth(l) > this.effectiveTextWidth,
     );
     if (!overflows) return;
+    // A whitespace-free overflowing edited line is a hard-split word
+    // mid-typing: break that line only (the paragraph fill would re-parse
+    // the neighboring chunks as words and glue them with spaces). The
+    // single-line mapper preserves the cursor via its own line-local walk.
+    const editedLine = lines[cursor.line] ?? "";
+    if (
+      visibleWidth(editedLine) > this.effectiveTextWidth &&
+      !/\s/.test(editedLine)
+    ) {
+      this.wrapCurrentLineIfNeeded();
+      return;
+    }
 
     // Cursor maps word-wise: the fill preserves word order, so locating the
     // word under the cursor (and the offset inside it) is whitespace-
