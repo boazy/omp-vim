@@ -1,0 +1,164 @@
+// Durable behavior tests for the shipped omp-vim extension.
+// The legacy test/ suite still targets the upstream @earendil-works API and is
+// not ported; CI runs only this file plus the shipped-source typecheck.
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import { getEditorTheme } from "@oh-my-pi/pi-coding-agent";
+import { visibleWidth } from "@oh-my-pi/pi-tui";
+import { ModalEditor } from "../index.ts";
+
+const ESC = "\x1b";
+
+function makeEditor() {
+  const ed = new ModalEditor(undefined, getEditorTheme(), undefined, {});
+  const notes: string[] = [];
+  ed.setNotifyFn((m: string) => notes.push(m));
+  const keys = (s: string) => {
+    for (const c of s) ed.handleInput(c);
+  };
+  return { ed, notes, keys };
+}
+
+function runEx(ed: ModalEditor, keys: (s: string) => void, cmd: string) {
+  keys(`${ESC}:`);
+  keys(cmd);
+  ed.handleInput("\r");
+}
+
+test("mode label is hidden in insert mode and shown in normal mode", () => {
+  const { ed, keys } = makeEditor();
+  keys("hello world this is a fairly long line of text here");
+  const insertLines = ed.render(40);
+  assert.ok(!insertLines.some((l) => l.includes("INSERT")));
+  assert.ok(insertLines.some((l) => l.includes("text here")));
+  keys(ESC);
+  assert.ok(ed.render(40).some((l) => l.includes("NORMAL")));
+});
+
+test("autowrap breaks at the last word boundary and consumes one space", () => {
+  const { ed, keys } = makeEditor();
+  ed.render(60); // etw = min(120, 60-6) = 54
+  const long = "aaaa bbbb cccc dddd eeee ffff gggg hhhh iiii jjjj kkkk ll mm";
+  keys(long);
+  assert.ok(ed.getLines().length > 1);
+  assert.equal(ed.getLines().join(" "), long);
+  assert.ok(visibleWidth(ed.getLines()[0] ?? "") <= 54);
+});
+
+test("wrapping measures display columns: CJK and emoji stay intact", () => {
+  const { ed, keys } = makeEditor();
+  ed.render(60); // etw = 54
+  const cjk = "你".repeat(30); // 60 display columns
+  keys(cjk);
+  const lines = ed.getLines();
+  assert.equal(lines.join(""), cjk);
+  assert.ok(visibleWidth(lines[0] ?? "") <= 54);
+
+  const emojiText = "a".repeat(53) + "👍".repeat(3);
+  const ed2 = makeEditor().ed;
+  ed2.render(60);
+  for (const c of emojiText) ed2.handleInput(c);
+  const lines2 = ed2.getLines();
+  assert.equal(lines2.join(""), emojiText);
+  assert.equal(lines2[1], "👍👍👍");
+});
+
+test("cursor lands at the mapped position for mid-tail wraps", () => {
+  const { ed, keys } = makeEditor();
+  ed.render(60); // etw = 54
+  ed.setText(`short\n${"a".repeat(49)} ${"c".repeat(12)}`);
+  keys(`${ESC}ggj55l`); // normal mode, cursor to (1, 55) — inside the c-run
+
+  type WrapProbe = { wrapCurrentLineIfNeeded(): void };
+  // White-box seam: the mid-tail wrap cursor path is not reachable by
+  // keystrokes alone because typing always overflows at end-of-line.
+  const probe = ed as unknown as WrapProbe;
+  probe.wrapCurrentLineIfNeeded();
+
+  assert.equal(
+    ed.getText(),
+    `short\n${"a".repeat(49)}\n${"c".repeat(12)}`,
+  );
+  assert.deepEqual(ed.getCursor(), { line: 2, col: 5 });
+});
+
+test(":set tw / fo mutate wrap state; etw is a read-only derived query", () => {
+  const { ed, notes, keys } = makeEditor();
+  ed.render(60);
+  runEx(ed, keys, "set tw=60");
+  keys("i");
+  const long = "aaaa bbbb cccc dddd eeee ffff gggg hhhh iiii jjjj kkkk ll mm";
+  keys(long);
+  assert.ok(ed.getLines().length > 1);
+  assert.equal(ed.getLines().join(" "), long);
+
+  runEx(ed, keys, "set etw?");
+  assert.ok(notes.includes("effectivetextwidth=54"));
+  runEx(ed, keys, "set tw?");
+  assert.ok(notes.includes("textwidth=60"));
+
+  runEx(ed, keys, "set fo=");
+  keys("i");
+  const before = ed.getLines().length;
+  keys(" nn oo pp qq rr ss tt");
+  assert.equal(ed.getLines().length, before);
+  runEx(ed, keys, "set fo+=t");
+  keys("a");
+  keys(" uu vv ww xx yy zz 00 11 22 33 44 55");
+  assert.ok(ed.getLines().length > before);
+});
+
+test("etw below 40 disables wrapping and reports 0", () => {
+  const { ed, notes, keys } = makeEditor();
+  ed.render(44); // 44 - 6 = 38 < 40 -> etw 0
+  keys("aaaa bbbb cccc dddd eeee ffff gggg hhhh iiii jjjj kkkk ll mm nn");
+  assert.equal(ed.getLines().length, 1);
+  runEx(ed, keys, "set etw?");
+  assert.ok(notes.includes("effectivetextwidth=0"));
+});
+
+test("textwidth=0 disables wrapping", () => {
+  const { ed, keys } = makeEditor();
+  ed.render(100);
+  runEx(ed, keys, "set textwidth=0");
+  keys("i");
+  keys("x".repeat(200));
+  assert.equal(ed.getLines().length, 1);
+});
+
+test("visual mode, surround, and U redo keep working", () => {
+  const { ed, keys } = makeEditor();
+  keys("hello world");
+  keys(`${ESC}0`);
+  keys("vlllld");
+  assert.equal(ed.getText(), " world");
+
+  const ed2 = makeEditor().ed;
+  const keys2 = (s: string) => {
+    for (const c of s) ed2.handleInput(c);
+  };
+  keys2("'hello'");
+  keys2(`${ESC}0l`);
+  keys2("cs'\"");
+  assert.equal(ed2.getText(), '"hello"');
+
+  const ed3 = makeEditor().ed;
+  const keys3 = (s: string) => {
+    for (const c of s) ed3.handleInput(c);
+  };
+  keys3("hello");
+  keys3(`${ESC}0`);
+  keys3("ysiw\"");
+  assert.equal(ed3.getText(), '"hello"');
+
+  const ed4 = makeEditor().ed;
+  const keys4 = (s: string) => {
+    for (const c of s) ed4.handleInput(c);
+  };
+  keys4("hello");
+  keys4(`${ESC}0x`);
+  keys4("u");
+  assert.equal(ed4.getText(), "hello");
+  keys4("U");
+  assert.equal(ed4.getText(), "ello");
+});

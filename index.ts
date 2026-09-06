@@ -940,8 +940,9 @@ export class ModalEditor extends CustomEditor {
         this.openLineAbove();
         return;
       }
+      const printableInsertion = this.isPrintableChunk(data);
       super.handleInput(data);
-      this.wrapCurrentLineIfNeeded();
+      if (printableInsertion) this.wrapCurrentLineIfNeeded();
       return;
     }
 
@@ -1202,22 +1203,38 @@ export class ModalEditor extends CustomEditor {
       const lines = this.getLines();
       const cursor = this.getCursor();
       const line = lines[cursor.line] ?? "";
-      if (line.length <= this.effectiveTextWidth) return;
+      const graphemes = getLineGraphemes(line);
 
-      let breakCol = -1;
-      const limit = Math.min(this.effectiveTextWidth, line.length - 1);
-      for (let i = limit; i > 0; i--) {
-        const prev = line[i - 1] ?? "";
-        const next = line[i] ?? "";
-        if (/\s/.test(prev) && !/\s/.test(next)) {
-          breakCol = i;
+      let lineWidth = 0;
+      let overflowIdx = -1;
+      for (let i = 0; i < graphemes.length; i++) {
+        const seg = graphemes[i] ?? { start: 0, end: 0 };
+        const w = visibleWidth(line.slice(seg.start, seg.end));
+        if (lineWidth + w > this.effectiveTextWidth) {
+          overflowIdx = i;
+          break;
+        }
+        lineWidth += w;
+      }
+      if (overflowIdx === -1) return;
+
+      let breakIdx = -1;
+      for (let i = overflowIdx; i > 0; i--) {
+        const prevSeg = graphemes[i - 1] ?? { start: 0, end: 0 };
+        const curSeg = graphemes[i] ?? { start: 0, end: 0 };
+        if (
+          /\s/.test(line.slice(prevSeg.start, prevSeg.end)) &&
+          !/\s/.test(line.slice(curSeg.start, curSeg.end))
+        ) {
+          breakIdx = i;
           break;
         }
       }
-      if (breakCol === -1) breakCol = limit;
+      if (breakIdx === -1) breakIdx = overflowIdx;
 
-      const head = line.slice(0, breakCol).replace(/[ \t]+$/, "");
-      const tail = line.slice(breakCol);
+      const breakChar = (graphemes[breakIdx] ?? { start: 0, end: 0 }).start;
+      const head = line.slice(0, breakChar).replace(/[ \t]+$/, "");
+      const tail = line.slice(breakChar);
       const nextLines = [
         ...lines.slice(0, cursor.line),
         head,
@@ -1225,13 +1242,15 @@ export class ModalEditor extends CustomEditor {
         ...lines.slice(cursor.line + 1),
       ];
       const nextCursor =
-        cursor.col >= breakCol
-          ? { line: cursor.line + 1, col: cursor.col - breakCol }
+        cursor.col >= breakChar
+          ? { line: cursor.line + 1, col: cursor.col - breakChar }
           : { line: cursor.line, col: Math.min(cursor.col, head.length) };
-      this.replaceTextInBuffer(
-        nextLines.join("\n"),
-        this.getAbsoluteIndex(nextCursor.line, nextCursor.col),
-      );
+      let cursorAbs = 0;
+      for (let i = 0; i < nextCursor.line; i++) {
+        cursorAbs += (nextLines[i] ?? "").length + 1;
+      }
+      cursorAbs += nextCursor.col;
+      this.replaceTextInBuffer(nextLines.join("\n"), cursorAbs);
     }
   }
 
