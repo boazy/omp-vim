@@ -40,7 +40,7 @@ Features this fork adds on top of upstream pi-vim:
 
 - `v` charwise, `V` linewise. The selection is highlighted and the block cursor marks the active end.
 - Motions extend the selection in both directions (`h/j/k/l`, `w/b/e/W/B/E`, `0/$/^`, `gg/G`, `f/t/;/,`, `%`, `{/}`); `o` swaps the active end. In normal and visual modes the cursor never rests past the last character (vim parity), so backward selections always include the anchor char.
-- Text objects select their range: `iw/aw/iW/aW` and quote/bracket objects (`i"`, `a(`, `ab`, `aB`, …).
+- Text objects select their range: `iw/aw/iW/aW` and quote/bracket objects (`i"`, `a(`, `ab`, `aB`, …). `j`/`k` keep the preferred column across shorter lines (vim sticky column), including through the autowrap cursor clamp.
 - Operators act on the selection: `d`/`x` delete, `c`/`s` change, `y` yank, `p`/`P` replace with the register, `r{char}` replace every selected char, `S{char}` surround the selection. `Esc` returns to normal mode.
 
 ### surround.vim (subset)

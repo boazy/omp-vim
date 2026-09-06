@@ -1,6 +1,6 @@
 {
   "name": "omp-vim",
-  "version": "0.12.1",
+  "version": "0.13.0",
   "description": "Vim-style modal editing for Oh My Pi's TUI prompt editor",
   "type": "module",
   "keywords": [

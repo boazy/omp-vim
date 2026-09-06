@@ -1011,13 +1011,17 @@ export class ModalEditor extends CustomEditor {
       this.handleSurroundInput(data);
       return;
     }
+    const horizontalMotion =
+      data === "h" || data === "l" || data === ESC_LEFT || data === ESC_RIGHT;
     if (this.mode === "visual" || this.mode === "visualLine") {
+      if (horizontalMotion) this.clampCursorToChar();
       this.handleVisualMode(data);
-      this.clampCursorToChar();
+      if (horizontalMotion) this.clampCursorToChar();
       return;
     }
+    if (horizontalMotion) this.clampCursorToChar();
     this.handleNormalMode(data);
-    this.clampCursorToChar();
+    if (horizontalMotion) this.clampCursorToChar();
   }
 
   private clearUnderlyingPasteStateIfActive(): void {
@@ -1195,12 +1199,10 @@ export class ModalEditor extends CustomEditor {
     this.effectiveTextWidth = etw;
   }
 
-  private autoWrapEnabled(): boolean {
-    return this.formatOptions.includes("t") && this.effectiveTextWidth > 0;
-  }
-
   private wrapCurrentLineIfNeeded(): void {
-    if (!this.autoWrapEnabled()) return;
+    if (!this.formatOptions.includes("t") || this.effectiveTextWidth <= 0) {
+      return;
+    }
     for (let guard = 0; guard < 64; guard++) {
       const lines = this.getLines();
       const cursor = this.getCursor();
@@ -2024,9 +2026,9 @@ export class ModalEditor extends CustomEditor {
     const cursor = this.getCursor();
     const line = lines[cursor.line] ?? "";
     if (line.length === 0 || cursor.col < line.length) return;
-    const graphemes = getLineGraphemes(line);
-    const last = graphemes[graphemes.length - 1];
-    if (last) this.moveCursorToCol(last.start);
+    // From the EOL caret, one grapheme-aware left lands on the last
+    // grapheme — code-unit-counted rights would overshoot on wide chars.
+    super.handleInput(ESC_LEFT);
   }
 
   private exitVisualToNormal(): void {
@@ -2036,12 +2038,36 @@ export class ModalEditor extends CustomEditor {
   }
 
   private getVisualRange(): { startAbs: number; endAbs: number } {
-    const cursorAbs = this.getAbsoluteIndexFromCursor();
-    const anchor = this.visualAnchor ?? cursorAbs;
+    const lines = this.getLines();
     const text = this.getText();
-    const startAbs = Math.max(0, Math.min(anchor, cursorAbs));
-    const endAbs = Math.min(Math.max(anchor, cursorAbs) + 1, text.length);
-    return { startAbs, endAbs };
+    // Normalize each endpoint to the grapheme interval it represents: the
+    // grapheme containing col, or the last grapheme for an EOL caret. This
+    // keeps the anchor char selected from either direction and never splits
+    // a multi-code-unit grapheme at the range edges.
+    const side = (line: number, col: number): { s: number; e: number } => {
+      const lineText = lines[line] ?? "";
+      const lineStart = this.getAbsoluteIndex(line, 0);
+      const graphemes = getLineGraphemes(lineText);
+      if (graphemes.length === 0) {
+        return { s: lineStart, e: lineStart };
+      }
+      let seg = graphemes[graphemes.length - 1] ?? { start: 0, end: 0 };
+      for (const g of graphemes) {
+        if (col >= g.start && col < g.end) {
+          seg = g;
+          break;
+        }
+      }
+      return { s: lineStart + seg.start, e: lineStart + seg.end };
+    };
+    const cursor = this.getCursor();
+    const a = side(cursor.line, cursor.col);
+    const anchorPos = this.getCursorFromAbsoluteIndex(
+      text,
+      this.visualAnchor ?? this.getAbsoluteIndexFromCursor(),
+    );
+    const b = side(anchorPos.line, anchorPos.col);
+    return { startAbs: Math.min(a.s, b.s), endAbs: Math.max(a.e, b.e) };
   }
 
   private getVisualLineRange(): { startLine: number; endLine: number } {
@@ -2646,11 +2672,19 @@ export class ModalEditor extends CustomEditor {
   }
 
   private moveCursorToAbsoluteIndex(abs: number): void {
-    const { line, col } = this.getCursorFromAbsoluteIndex(this.getText(), abs);
+    const text = this.getText();
+    const { line, col } = this.getCursorFromAbsoluteIndex(text, abs);
+    const lineText = this.getLines()[line] ?? "";
+    // Arrows advance one grapheme, so the press count is the number of
+    // graphemes fully before the target column — not the code-unit offset.
+    let presses = 0;
+    for (const g of getLineGraphemes(lineText)) {
+      if (g.end <= col) presses++;
+    }
     this.moveToMessageStart();
     for (let i = 0; i < line; i++) super.handleInput(ESC_DOWN);
     this.moveToLineStart();
-    for (let i = 0; i < col; i++) super.handleInput(ESC_RIGHT);
+    for (let i = 0; i < presses; i++) super.handleInput(ESC_RIGHT);
   }
 
   private moveCursorToLineStart(lineIndex: number): void {
@@ -3772,7 +3806,14 @@ export class ModalEditor extends CustomEditor {
     if (!range) return [...super.render(width)];
 
     const text = this.getText();
-    const cursorAbs = this.getAbsoluteIndexFromCursor();
+    const cursorPos = this.getCursor();
+    const cursorLineText = this.getLines()[cursorPos.line] ?? "";
+    // The software-cursor glyph displaces a text char only when the cursor
+    // sits on one; an EOL caret renders after the last char (no split).
+    const cursorAbs =
+      cursorPos.col < cursorLineText.length
+        ? this.getAbsoluteIndex(cursorPos.line, cursorPos.col)
+        : -1;
     const previous = this.decorateText;
     let abs = 0;
     this.decorateText = (segment: string): string => {

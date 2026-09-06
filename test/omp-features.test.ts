@@ -220,3 +220,77 @@ test("linewise backward selection (V then k) deletes both lines", () => {
   keys(`${ESC}Vkd`);
   assert.equal(ed.getText(), "");
 });
+
+test("j/k keep the preferred column across shorter lines", () => {
+  const { ed, keys } = makeEditor();
+  keys("a".repeat(60));
+  keys(`${ESC}o`);
+  keys("ab" + ESC + "o");
+  keys("c".repeat(60) + ESC);
+  keys("gg50l");
+  assert.deepEqual(ed.getCursor(), { line: 0, col: 50 });
+  keys("j");
+  assert.deepEqual(ed.getCursor(), { line: 1, col: 2 }); // base EOL caret, clamp skipped for vertical
+  keys("j");
+  assert.deepEqual(ed.getCursor(), { line: 2, col: 50 }); // sticky restored
+  keys("k");
+  assert.deepEqual(ed.getCursor(), { line: 1, col: 2 });
+  keys("k");
+  assert.deepEqual(ed.getCursor(), { line: 0, col: 50 });
+});
+
+test("charwise visual selection across a short line stays in bounds", () => {
+  const { ed, keys } = makeEditor();
+  keys("a".repeat(60));
+  keys(`${ESC}o`);
+  keys("ab" + ESC + "o");
+  keys("c".repeat(60) + ESC);
+  keys("gg50l");
+  keys("vjj"); // anchor (0,50) -> cursor (2,50) through the 2-char line
+  keys("d");
+  // The selection spans both newlines, so the delete joins the fragments.
+  assert.equal(ed.getText(), `${"a".repeat(50)}${"c".repeat(9)}`);
+});
+
+test("$ anchors visual on the last char for backward yank", () => {
+  const { ed, keys } = makeEditor();
+  keys("abcdef");
+  keys(`${ESC}$`);
+  keys("vhh");
+  keys("y");
+  assert.equal(ed.getRegister(), "def");
+});
+
+test("backward visual k onto a short line keeps its last char", () => {
+  const { ed, keys } = makeEditor();
+  keys("ab" + ESC + "o");
+  keys("c".repeat(60) + ESC);
+  keys("ggj50l"); // (1, 50)
+  keys("v");
+  keys("k"); // cursor to the EOL caret of "ab"; interval math includes 'b'
+  keys("d");
+  assert.equal(ed.getText(), `a${"c".repeat(9)}`);
+});
+
+test("visual range never splits an emoji at the edge", () => {
+  const { ed, keys } = makeEditor();
+  keys("hi 👍");
+  keys(`${ESC}ggv$d`);
+  assert.equal(ed.getText(), "");
+});
+
+test("clamp handles wide graphemes: l rests on the last grapheme", () => {
+  const { ed, keys } = makeEditor();
+  keys("👍a");
+  keys(`${ESC}l`); // must rest ON 'a', not the EOL caret past it
+  keys("vhh");
+  keys("d");
+  assert.equal(ed.getText(), "");
+});
+
+test("x after l on a wide-char line deletes the last grapheme", () => {
+  const { ed, keys } = makeEditor();
+  keys("👍a");
+  keys(`${ESC}lx`);
+  assert.equal(ed.getText(), "👍");
+});
