@@ -1013,9 +1013,11 @@ export class ModalEditor extends CustomEditor {
     }
     if (this.mode === "visual" || this.mode === "visualLine") {
       this.handleVisualMode(data);
+      this.clampCursorToChar();
       return;
     }
     this.handleNormalMode(data);
+    this.clampCursorToChar();
   }
 
   private clearUnderlyingPasteStateIfActive(): void {
@@ -2011,8 +2013,20 @@ export class ModalEditor extends CustomEditor {
   }
 
   private enterVisual(target: "visual" | "visualLine"): void {
+    this.clampCursorToChar();
     this.visualAnchor = this.getAbsoluteIndexFromCursor();
     this.setMode(target);
+  }
+
+  private clampCursorToChar(): void {
+    if (this.mode === "insert") return;
+    const lines = this.getLines();
+    const cursor = this.getCursor();
+    const line = lines[cursor.line] ?? "";
+    if (line.length === 0 || cursor.col < line.length) return;
+    const graphemes = getLineGraphemes(line);
+    const last = graphemes[graphemes.length - 1];
+    if (last) this.moveCursorToCol(last.start);
   }
 
   private exitVisualToNormal(): void {

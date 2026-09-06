@@ -126,7 +126,7 @@ test("textwidth=0 disables wrapping", () => {
   assert.equal(ed.getLines().length, 1);
 });
 
-test("visual mode, surround, and U redo keep working", () => {
+test("visual forward selection, surround, and U redo keep working", () => {
   const { ed, keys } = makeEditor();
   keys("hello world");
   keys(`${ESC}0`);
@@ -161,4 +161,62 @@ test("visual mode, surround, and U redo keep working", () => {
   assert.equal(ed4.getText(), "hello");
   keys4("U");
   assert.equal(ed4.getText(), "ello");
+});
+
+test("visual backward selection: from the last char, across the anchor", () => {
+  const { ed, keys } = makeEditor();
+  // v on 'f', h -> on 'e': selection "ef"
+  keys("abcdef");
+  keys(`${ESC}vhd`);
+  assert.equal(ed.getText(), "abcd");
+
+  // v on 'f', hh -> on 'd': selection "def" (anchor char included)
+  const ed2 = makeEditor().ed;
+  const keys2 = (s: string) => {
+    for (const c of s) ed2.handleInput(c);
+  };
+  keys2("abcdef");
+  keys2(`${ESC}vhh`);
+  keys2("d");
+  assert.equal(ed2.getText(), "abc");
+});
+
+test("normal-mode l never rests on the EOL caret (regression)", () => {
+  const { ed, keys } = makeEditor();
+  // Historically: ESC l put the caret one past the last char, so v anchored
+  // at a phantom position and backward selects covered the wrong span.
+  keys("abcdef");
+  keys(`${ESC}l`); // vim: stays on 'f'
+  keys("v");
+  keys("hh");
+  keys("d");
+  assert.equal(ed.getText(), "abc");
+
+  // yank registers the same span backwards
+  const ed2 = makeEditor().ed;
+  const keys2 = (s: string) => {
+    for (const c of s) ed2.handleInput(c);
+  };
+  keys2("abcdef");
+  keys2(`${ESC}lvhy`);
+  assert.equal(ed2.getRegister(), "ef");
+});
+
+test("backward selection renders the highlight on the left span", () => {
+  const { ed, keys } = makeEditor();
+  keys("abcdef");
+  keys(`${ESC}vhh`); // cursor on 'd', anchor 'f': selection "def"
+  const lines = ed.render(44);
+  const rendered = lines.at(-1) ?? "";
+  assert.ok(rendered.includes("\x1b[7mef\x1b[27m"));
+  assert.ok(!rendered.includes("\x1b[7mab"));
+});
+
+test("linewise backward selection (V then k) deletes both lines", () => {
+  const { ed, keys } = makeEditor();
+  keys("one");
+  keys(`${ESC}o`);
+  keys("two");
+  keys(`${ESC}Vkd`);
+  assert.equal(ed.getText(), "");
 });
