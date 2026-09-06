@@ -3756,9 +3756,9 @@ export class ModalEditor extends CustomEditor {
     const text = this.getText();
     const cursorPos = this.getCursor();
     const cursorLineText = this.getLines()[cursorPos.line] ?? "";
-    // OMP 18's terminal-cursor path keeps the cursor grapheme in the
-    // post-marker segment; only the software-cursor path displaces a char
-    // (an EOL caret renders after the last char in both cases).
+    // The terminal-cursor path keeps the cursor grapheme in the post-marker
+    // segment; only the software-cursor path displaces a char (an EOL caret
+    // renders after the last char in both paths).
     const useTerminalCursor = this.getUseTerminalCursor();
     const cursorAbs = useTerminalCursor
       ? -1
@@ -3767,13 +3767,26 @@ export class ModalEditor extends CustomEditor {
         : -1;
     const previous = this.decorateText;
     let abs = 0;
-    this.decorateText = (segment: string): string => {
-      while (abs < text.length && (text[abs] === "\n" || abs === cursorAbs)) {
-        abs++;
+    type DecoratePos = { line: number; startCol: number; endCol: number };
+    const decorate = (segment: string, pos?: DecoratePos): string => {
+      // OMP 18 passes the segment's logical line and source columns
+      // directly; 16.x passes unpositioned segments in document order.
+      let start: number;
+      if (pos) {
+        start = this.getAbsoluteIndex(pos.line, pos.startCol);
+      } else {
+        while (
+          abs < text.length &&
+          (text[abs] === "\n" || abs === cursorAbs)
+        ) {
+          abs++;
+        }
+        if (text.slice(abs, abs + segment.length) !== segment) {
+          return segment;
+        }
+        start = abs;
+        abs += segment.length;
       }
-      if (text.slice(abs, abs + segment.length) !== segment) return segment;
-      const start = abs;
-      abs += segment.length;
       const hs = Math.max(start, range.start) - start;
       const he = Math.min(start + segment.length, range.end) - start;
       if (he <= hs) return segment;
@@ -3785,6 +3798,9 @@ export class ModalEditor extends CustomEditor {
         segment.slice(he)
       );
     };
+    // OMP 18 hands decorateText a column-info second argument that the
+    // pinned @oh-my-pi type does not declare yet.
+    this.decorateText = decorate as (segment: string) => string;
     try {
       return [...super.render(width)];
     } finally {
