@@ -1306,22 +1306,30 @@ export class ModalEditor extends CustomEditor {
     );
     if (!overflows) return;
 
-    // Non-newline characters are preserved in order by the reflow, so the
-    // cursor maps by counting them on both sides.
+    // Cursor maps word-wise: the fill preserves word order, so locating the
+    // word under the cursor (and the offset inside it) is whitespace-
+    // immune — a count-based mapping drifts when earlier lines re-pack.
     const cursorAbs = this.getAbsoluteIndex(cursor.line, cursor.col);
     const offInPara = Math.max(
       0,
       Math.min(cursorAbs - paraStartAbs, paraText.length),
     );
-    let charsBeforeCursor = 0;
-    for (const ch of paraText.slice(0, offInPara)) {
-      if (ch !== "\n") charsBeforeCursor++;
+    let wordIdx = 0;
+    for (let i = 0; i < words.length; i++) {
+      if (offInPara >= (words[i] ?? { start: 0 }).start) wordIdx = i;
     }
+    const anchorWord = words[wordIdx] ?? { word: "", start: 0 };
+    const offInWord = Math.max(
+      0,
+      Math.min(offInPara - anchorWord.start, anchorWord.word.length),
+    );
 
     // Greedy fill measured in display columns; words wider than the budget
     // are hard-split at grapheme boundaries.
     const pieces: string[] = [];
+    const wordFirstPiece: number[] = [];
     for (const { word } of words) {
+      wordFirstPiece.push(pieces.length);
       if (visibleWidth(word) <= this.effectiveTextWidth) {
         pieces.push(word);
         continue;
@@ -1361,16 +1369,19 @@ export class ModalEditor extends CustomEditor {
     if (current.length > 0) out.push(current);
 
     const newParaText = out.join("\n");
-    let newOff = 0;
-    let i = 0;
-    while (i < newParaText.length && charsBeforeCursor > 0) {
-      if (newParaText[i] !== "\n") charsBeforeCursor--;
-      i++;
+    const pieceStarts: number[] = [];
+    for (const m of newParaText.matchAll(/\S+/g)) {
+      pieceStarts.push(m.index);
     }
-    newOff = i;
+    const firstPiece = wordFirstPiece[Math.min(wordIdx, wordFirstPiece.length - 1)] ?? 0;
+    const pieceStart = pieceStarts[firstPiece] ?? newParaText.length;
+    const newCursorAbs = Math.min(
+      paraStartAbs + pieceStart + offInWord,
+      paraStartAbs + newParaText.length,
+    );
     this.replaceTextInBuffer(
       [...lines.slice(0, start), ...out, ...lines.slice(end + 1)].join("\n"),
-      paraStartAbs + newOff,
+      newCursorAbs,
     );
   }
 
