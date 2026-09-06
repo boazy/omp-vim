@@ -1227,6 +1227,20 @@ export class ModalEditor extends CustomEditor {
       // word boundary the user is still typing at is not eaten mid-flow;
       // the next non-whitespace insertion triggers it.
       if (!endedWithWhitespace) {
+        // A whitespace-free overflowing current line (a hard-split word
+        // mid-typing) must use the line break, not the paragraph fill: the
+        // fill would glue the following chunk to the continuation with a
+        // space. The cursor sits inside that word, so its line has no
+        // separator to normalize.
+        const cursor = this.getCursor();
+        const line = this.getLines()[cursor.line] ?? "";
+        const lineOverflows =
+          visibleWidth(line) > this.effectiveTextWidth;
+        const lineIsWhitespaceFree = !/\s/.test(line);
+        if (lineOverflows && lineIsWhitespaceFree) {
+          this.wrapCurrentLineIfNeeded();
+          return;
+        }
         this.reflowParagraphAroundCursor();
       }
       return;

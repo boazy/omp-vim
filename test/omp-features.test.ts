@@ -434,3 +434,23 @@ test("reflow cursor stays adjacent for an insertion inside a hard-split word", (
     assert.ok(visibleWidth(l) <= 54, JSON.stringify(ed.getLines()));
   }
 });
+
+test("second reflow during hard-split typing keeps adjacency (X then Y)", () => {
+  const { ed, keys } = makeEditor();
+  ed.render(60); // etw = 54
+  runEx(ed, keys, "set fo=");
+  keys("i");
+  keys("w".repeat(140) + " end"); // prefix-free fixture
+  runEx(ed, keys, "set fo=at"); // feature under test
+  keys("084l"); // col 84: offInWord ≈ 84 — inside the second hard-split
+  // chunk, so X forces the first reflow and Y (crossing etw at its new
+  // position) forces the second; both must keep XY adjacent and ordered
+  keys("iXY\x1b");
+  const text = ed.getText().replace(/\n/g, "");
+  // Exact content: the reflows consumed only break spaces; X and Y must
+  // stay adjacent and in order at their insertion offset (col 84).
+  assert.equal(text, "w".repeat(84) + "XY" + "w".repeat(56) + " end");
+  for (const l of ed.getLines()) {
+    assert.ok(visibleWidth(l) <= 54, JSON.stringify(ed.getLines()));
+  }
+});
