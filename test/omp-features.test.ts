@@ -375,3 +375,61 @@ test("formatoptions defaults to at and is queryable", () => {
   ed.handleInput("\r");
   assert.ok(notes.includes("formatoptions=at"), JSON.stringify(notes));
 });
+
+test("a reflow takes precedence for past-margin edits across lines", () => {
+  const { ed, keys } = makeEditor();
+  ed.render(60); // etw = 54
+  keys("aaaa aaaa aaaa aaaa aaaa aaaa aaaa aaaa");
+  keys(`${ESC}o`);
+  keys("bbbb bbbb bbbb bbbb bbbb bbbb bbbb bbbb bbbb bbbb");
+  keys(`${ESC}o`);
+  keys("cccc cccc cccc cccc cccc cccc cccc cccc cccc cccc");
+  keys(`${ESC}ggjj`); // cursor to col 0 of the last line (past-margin edit)
+  keys("iZZZZZZZZ"); // non-whitespace insertion -> paragraph reflow
+  keys("\x1b");
+  const lines = ed.getLines();
+  for (const l of lines) {
+    assert.ok(visibleWidth(l) <= 54, JSON.stringify(lines));
+  }
+  // The first line is packed back up: the paragraph rebalanced, not just
+  // the edited line splitting.
+  assert.ok(visibleWidth(lines[0]) > 40, JSON.stringify(lines));
+  const expected = [
+    "ZZZZZZZZcccc",
+    ...Array<string>(8).fill("aaaa"),
+    ...Array<string>(10).fill("bbbb"),
+    ...Array<string>(9).fill("cccc"),
+  ]
+    .sort()
+    .join("|");
+  const words = ed
+    .getText()
+    .split(/\s+/)
+    .filter(Boolean)
+    .sort()
+    .join("|");
+  assert.equal(words, expected);
+});
+
+test("terminal-cursor highlight survives a real TUI (no cursor strip)", () => {
+  const writes: string[] = [];
+  const tui = {
+    terminal: { write: (s: string) => { writes.push(s); } },
+    setShowHardwareCursor: (show: boolean) => { writes.push(`hw:${show}`); },
+    getShowHardwareCursor: () => true,
+  };
+  const ed = new ModalEditor(tui, getEditorTheme(), undefined, {});
+  ed.focused = true;
+  ed.setUseTerminalCursor(true);
+  const keys = (s: string) => {
+    for (const c of s) ed.handleInput(c);
+  };
+  keys("abcdef");
+  keys(`${ESC}vhh`);
+  const lines = ed.render(44);
+  const rendered = lines.at(-1) ?? "";
+  // The visual highlight must survive render post-processing: a partial
+  // fix that keeps the software-cursor strip would eat it here.
+  assert.ok(rendered.includes("\x1b[7mdef\x1b[27m"), rendered);
+  assert.ok(writes.includes("\x1b[1 q"), JSON.stringify(writes));
+});

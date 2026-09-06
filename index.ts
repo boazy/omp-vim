@@ -901,7 +901,7 @@ export class ModalEditor extends CustomEditor {
       }
       const printableInsertion = this.isPrintableChunk(data);
       super.handleInput(data);
-      if (printableInsertion) this.wrapAfterInsertion();
+      if (printableInsertion) this.wrapAfterInsertion(/\s$/.test(data));
       return;
     }
 
@@ -1214,21 +1214,27 @@ export class ModalEditor extends CustomEditor {
     }
   }
 
-  private wrapAfterInsertion(): void {
+  private wrapAfterInsertion(endedWithWhitespace: boolean): void {
     if (this.isInsideCodeFence()) return;
     if (this.effectiveTextWidth <= 0) return;
-    if (!this.formatOptions.includes("t") && !this.formatOptions.includes("a")) {
+    const hasT = this.formatOptions.includes("t");
+    const hasA = this.formatOptions.includes("a");
+    if (!hasT && !hasA) return;
+    if (hasA) {
+      // `a` rearranges the whole paragraph whenever it overflows — for
+      // mid-line edits and for insertions at/past the margin alike. The
+      // reflow is deferred while the inserted chunk ends in whitespace so a
+      // word boundary the user is still typing at is not eaten mid-flow;
+      // the next non-whitespace insertion triggers it.
+      if (!endedWithWhitespace) {
+        this.reflowParagraphAroundCursor();
+      }
       return;
     }
     if (this.cursorDisplayCol() >= this.effectiveTextWidth) {
-      // The insertion point sits at/past the wrap margin: plain word wrap
-      // (both `t` and `a`; vim's cursor-crosses-the-margin behavior).
+      // `t` alone: plain word wrap when the insertion point is at/past the
+      // wrap margin (display columns).
       this.wrapCurrentLineIfNeeded();
-      return;
-    }
-    if (this.formatOptions.includes("a")) {
-      // Mid-line edit before the margin: paragraph reflow under `a` only.
-      this.reflowParagraphAroundCursor();
     }
   }
 
