@@ -231,9 +231,9 @@ test("j/k keep the preferred column across shorter lines", () => {
   assert.deepEqual(ed.getCursor(), { line: 0, col: 50 });
   keys("j");
   assert.deepEqual(ed.getCursor(), { line: 1, col: 2 }); // base EOL caret, clamp skipped for vertical
-  keys("j");
+  keys("2j"); // digit arrives while the caret rests at EOL: sticky must survive
   assert.deepEqual(ed.getCursor(), { line: 2, col: 50 }); // sticky restored
-  keys("k");
+  keys("2k");
   assert.deepEqual(ed.getCursor(), { line: 1, col: 2 });
   keys("k");
   assert.deepEqual(ed.getCursor(), { line: 0, col: 50 });
@@ -286,6 +286,16 @@ test("clamp handles wide graphemes: l rests on the last grapheme", () => {
   keys("vhh");
   keys("d");
   assert.equal(ed.getText(), "");
+});
+
+test("one-step backward select with a wide char at the anchor", () => {
+  const { ed, keys } = makeEditor();
+  // After ESC l the caret must rest on 'b' (not the EOL caret), so a single
+  // h selects "ab" — not just the anchor's neighbor.
+  keys("👍ab");
+  keys(`${ESC}l`);
+  keys("vhd");
+  assert.equal(ed.getText(), "👍");
 });
 
 test("x after l on a wide-char line deletes the last grapheme", () => {
