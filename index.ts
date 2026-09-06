@@ -512,6 +512,10 @@ export class ModalEditor extends CustomEditor {
   private visualAnchor: number | null = null;
   private visualReplacePending: boolean = false;
   private surround: SurroundState | null = null;
+  private textWidth: number = 120;
+  private formatOptions: string = "t";
+  private effectiveTextWidth: number = 0;
+  private lastRenderWidth: number | null = null;
   private lastCharMotion: LastCharMotion | null = null;
   private discardingBracketedPasteInNormalMode: boolean = false;
   private pendingEscWhileDiscardingBracketedPasteInNormalMode: boolean = false;
@@ -937,6 +941,7 @@ export class ModalEditor extends CustomEditor {
         return;
       }
       super.handleInput(data);
+      this.wrapCurrentLineIfNeeded();
       return;
     }
 
@@ -1176,6 +1181,152 @@ export class ModalEditor extends CustomEditor {
     return this.getText().trim().length > 0;
   }
 
+  private recomputeEffectiveTextWidth(): void {
+    if (this.textWidth <= 0) {
+      this.effectiveTextWidth = 0;
+      return;
+    }
+    const width = this.lastRenderWidth ?? this.textWidth;
+    let etw = Math.min(this.textWidth, Math.max(0, width - 6));
+    if (etw < 40) etw = 0;
+    this.effectiveTextWidth = etw;
+  }
+
+  private autoWrapEnabled(): boolean {
+    return this.formatOptions.includes("t") && this.effectiveTextWidth > 0;
+  }
+
+  private wrapCurrentLineIfNeeded(): void {
+    if (!this.autoWrapEnabled()) return;
+    for (let guard = 0; guard < 64; guard++) {
+      const lines = this.getLines();
+      const cursor = this.getCursor();
+      const line = lines[cursor.line] ?? "";
+      if (line.length <= this.effectiveTextWidth) return;
+
+      let breakCol = -1;
+      const limit = Math.min(this.effectiveTextWidth, line.length - 1);
+      for (let i = limit; i > 0; i--) {
+        const prev = line[i - 1] ?? "";
+        const next = line[i] ?? "";
+        if (/\s/.test(prev) && !/\s/.test(next)) {
+          breakCol = i;
+          break;
+        }
+      }
+      if (breakCol === -1) breakCol = limit;
+
+      const head = line.slice(0, breakCol).replace(/[ \t]+$/, "");
+      const tail = line.slice(breakCol);
+      const nextLines = [
+        ...lines.slice(0, cursor.line),
+        head,
+        tail,
+        ...lines.slice(cursor.line + 1),
+      ];
+      const nextCursor =
+        cursor.col >= breakCol
+          ? { line: cursor.line + 1, col: cursor.col - breakCol }
+          : { line: cursor.line, col: Math.min(cursor.col, head.length) };
+      this.replaceTextInBuffer(
+        nextLines.join("\n"),
+        this.getAbsoluteIndex(nextCursor.line, nextCursor.col),
+      );
+    }
+  }
+
+  private applyExSet(body: string): void {
+    if (body.length === 0) {
+      this.notifyFn(
+        "Usage: set tw=N | set fo=t | set fo= | set tw? | set fo? | set etw?",
+      );
+      return;
+    }
+    for (const part of body.split(/\s+/)) {
+      this.applyExSetPart(part);
+    }
+  }
+
+  private applyExSetPart(part: string): void {
+    if (part.endsWith("?")) {
+      this.exSetQuery(part.slice(0, -1));
+      return;
+    }
+
+    let key: string;
+    let op: "=" | "+=" | "-=";
+    let value: string;
+    const addIdx = part.indexOf("+=");
+    const removeIdx = part.indexOf("-=");
+    const eqIdx = part.indexOf("=");
+    if (addIdx !== -1) {
+      key = part.slice(0, addIdx);
+      op = "+=";
+      value = part.slice(addIdx + 2);
+    } else if (removeIdx !== -1) {
+      key = part.slice(0, removeIdx);
+      op = "-=";
+      value = part.slice(removeIdx + 2);
+    } else if (eqIdx !== -1) {
+      key = part.slice(0, eqIdx);
+      op = "=";
+      value = part.slice(eqIdx + 1);
+    } else {
+      this.notifyFn(`Unsupported :set syntax: ${part}`);
+      return;
+    }
+
+    if (key === "tw" || key === "textwidth") {
+      if (op !== "=") {
+        this.notifyFn("textwidth supports only set tw=N");
+        return;
+      }
+      const parsed = Number.parseInt(value, 10);
+      if (!Number.isInteger(parsed) || parsed < 0) {
+        this.notifyFn(`Invalid textwidth: ${value}`);
+        return;
+      }
+      this.textWidth = parsed;
+      this.recomputeEffectiveTextWidth();
+      return;
+    }
+
+    if (key === "fo" || key === "formatoptions") {
+      if ([...value].some((c) => c !== "t")) {
+        this.notifyFn(
+          "Only the t formatoptions flag is supported; others ignored",
+        );
+      }
+      const hasT = value.includes("t");
+      if (op === "=") {
+        this.formatOptions = hasT ? "t" : "";
+      } else if (op === "+=" && hasT) {
+        this.formatOptions = "t";
+      } else if (op === "-=" && hasT) {
+        this.formatOptions = "";
+      }
+      return;
+    }
+
+    this.notifyFn(`Unsupported :set option: ${key}`);
+  }
+
+  private exSetQuery(key: string): void {
+    if (key === "tw" || key === "textwidth") {
+      this.notifyFn(`textwidth=${this.textWidth}`);
+      return;
+    }
+    if (key === "fo" || key === "formatoptions") {
+      this.notifyFn(`formatoptions=${this.formatOptions}`);
+      return;
+    }
+    if (key === "etw" || key === "effectivetextwidth") {
+      this.notifyFn(`effectivetextwidth=${this.effectiveTextWidth}`);
+      return;
+    }
+    this.notifyFn(`Unsupported :set option: ${key}`);
+  }
+
   private submitPendingExCommand(): void {
     const command = this.pendingExCommand?.slice(1).trim() ?? "";
     this.clearPendingExCommand();
@@ -1192,6 +1343,10 @@ export class ModalEditor extends CustomEditor {
 
     if (command === "q!" || command === "qa!") {
       this.quitFn();
+      return;
+    }
+    if (command === "set" || command.startsWith("set ")) {
+      this.applyExSet(command.slice(3).trim());
       return;
     }
 
@@ -3548,9 +3703,12 @@ export class ModalEditor extends CustomEditor {
   }
 
   render(width: number): string[] {
+    this.lastRenderWidth = width;
+    this.recomputeEffectiveTextWidth();
     const lines = this.renderContentLines(width);
     this.syncCursorShapeForRender(lines);
     if (lines.length === 0) return lines;
+    if (this.mode === "insert") return lines;
 
     const rawLabel = this.fitModeLabel(this.getModeLabel(), width);
     const colorize = this.getModeLabelColorizer();

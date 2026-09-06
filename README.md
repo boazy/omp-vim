@@ -30,7 +30,7 @@ Changes from upstream `pi-vim` required to run on Oh My Pi's compiled binary and
 - The buffer/cursor engine is rerouted onto Oh My Pi's public `Editor` API (`setText`, `insertText`, `moveTo*`, arrow-key navigation) because Oh My Pi keeps editor state private. Cursor positioning is O(n) in prompt length, which is fine for short prompts.
 - Undo/redo is a self-contained snapshot stack (Oh My Pi does not expose the host undo hook).
 
-Known limitations: initial insert-mode typing (before the first `Esc`) is not undoable; `cw` includes the trailing space; the inherited test suite still targets the upstream API and is not yet ported.
+Known limitations: initial insert-mode typing (before the first `Esc`) is not undoable (wrap/normal-mode edits are); `cw` includes the trailing space; the inherited test suite still targets the upstream API and is not yet ported.
 
 ## Additions beyond pi-vim
 
@@ -54,6 +54,21 @@ Targets/replacements: `( ) b`, `{ } B`, `[ ] r`, `< >`, `"`, `'`, `` ` ``. Openi
 ### Redo
 
 `U` is a redo alias alongside `Ctrl-R`.
+
+### Word wrapping
+
+Autowrap is on by default with `textwidth` (`tw`) 120, honoring only the `t` flag of `formatoptions` (`fo`) — set via the ex mini-mode:
+
+- `:set tw=80` / `:set textwidth=80` — set the wrap column (`0` disables).
+- `:set fo=t` / `:set fo=` / `:set fo+=t` / `:set fo-=t` — enable/disable autowrap (`t` is the only supported flag).
+- `:set tw?`, `:set fo?` — query values.
+- `:set etw?` — query the read-only `effectivetextwidth` (`etw`): the actual wrap width, `min(textwidth, prompt_width - 6)`, recomputed as the prompt widget resizes. When `etw` drops below 40 it is automatically forced to `0`, disabling autowrap on narrow prompts.
+
+While typing in insert mode with autowrap enabled, the current line breaks at the last word boundary at or before `etw` (the break consumes one space, like vim). Wraps are undoable steps.
+
+### Mode label
+
+The mode label is shown in normal, visual, and EX modes. In insert mode it is hidden entirely so it can never cover the end of a long line.
 
 ## configure
 
