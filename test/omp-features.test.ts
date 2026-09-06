@@ -413,3 +413,24 @@ test("a reflow rebalances earlier lines for past-margin edits", () => {
       .join("|"),
   );
 });
+
+test("reflow cursor stays adjacent for an insertion inside a hard-split word", () => {
+  const { ed, keys } = makeEditor();
+  ed.render(60); // etw = 54
+  runEx(ed, keys, "set fo="); // build one long unsplit line
+  keys("i");
+  keys("w".repeat(140) + " end"); // prefix-free: the reflow's breaks must
+  // reconstruct exactly this word when newlines are stripped
+  runEx(ed, keys, "set fo=at"); // feature under test
+  keys("0120l"); // col 120: offInWord ≈ 120, past the second hard-split
+  // piece boundary — keeps Y below the width so no second reflow fires
+  keys("iXY\x1b"); // "XY" must stay adjacent to each other and to the w's
+  const text = ed.getText().replace(/\n/g, "");
+  assert.equal(
+    text,
+    "w".repeat(120) + "XY" + "w".repeat(20) + " end",
+  );
+  for (const l of ed.getLines()) {
+    assert.ok(visibleWidth(l) <= 54, JSON.stringify(ed.getLines()));
+  }
+});

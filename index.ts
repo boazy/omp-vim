@@ -1326,12 +1326,18 @@ export class ModalEditor extends CustomEditor {
 
     // Greedy fill measured in display columns; words wider than the budget
     // are hard-split at grapheme boundaries.
-    const pieces: string[] = [];
+    // Piece model for the greedy fill: each piece carries `joinsPrev`,
+    // false when the piece starts a new word (separated by a space) and
+    // true when it is a hard-split continuation of the previous piece
+    // (appended with no separator, so split words stay whole). Words
+    // wider than the budget are hard-split at grapheme boundaries.
+    type Piece = { text: string; joinsPrev: boolean };
+    const pieces: Piece[] = [];
     const wordFirstPiece: number[] = [];
     for (const { word } of words) {
       wordFirstPiece.push(pieces.length);
       if (visibleWidth(word) <= this.effectiveTextWidth) {
-        pieces.push(word);
+        pieces.push({ text: word, joinsPrev: false });
         continue;
       }
       let chunk = "";
@@ -1339,45 +1345,72 @@ export class ModalEditor extends CustomEditor {
       for (const g of getLineGraphemes(word)) {
         const gw = visibleWidth(word.slice(g.start, g.end));
         if (chunkWidth + gw > this.effectiveTextWidth && chunk.length > 0) {
-          pieces.push(chunk);
+          pieces.push({ text: chunk, joinsPrev: false });
           chunk = "";
           chunkWidth = 0;
         }
         chunk += word.slice(g.start, g.end);
         chunkWidth += gw;
       }
-      if (chunk.length > 0) pieces.push(chunk);
+      if (chunk.length > 0) pieces.push({ text: chunk, joinsPrev: false });
+      for (
+        let p = wordFirstPiece[wordFirstPiece.length - 1] + 1;
+        p < pieces.length;
+        p++
+      ) {
+        pieces[p].joinsPrev = true;
+      }
     }
 
     const out: string[] = [];
+    const pieceStarts: number[] = [];
     let current = "";
     let currentWidth = 0;
+    let currentLineStartAbs = paraStartAbs;
     for (const piece of pieces) {
-      const pieceWidth = visibleWidth(piece);
-      if (current.length === 0) {
-        current = piece;
-        currentWidth = pieceWidth;
-      } else if (currentWidth + 1 + pieceWidth <= this.effectiveTextWidth) {
-        current += " " + piece;
-        currentWidth += 1 + pieceWidth;
+      const pieceWidth = visibleWidth(piece.text);
+      const separatorWidth = current.length === 0 || piece.joinsPrev ? 0 : 1;
+      if (
+        current.length === 0 ||
+        currentWidth + separatorWidth + pieceWidth <= this.effectiveTextWidth
+      ) {
+        if (current.length === 0) {
+          pieceStarts.push(currentLineStartAbs);
+          current = piece.text;
+          currentWidth = pieceWidth;
+          continue;
+        }
+        pieceStarts.push(currentLineStartAbs + current.length + separatorWidth);
+        current += (piece.joinsPrev ? "" : " ") + piece.text;
+        currentWidth += separatorWidth + pieceWidth;
       } else {
         out.push(current);
-        current = piece;
+        currentLineStartAbs += current.length + 1;
+        current = piece.text;
         currentWidth = pieceWidth;
+        pieceStarts.push(currentLineStartAbs);
       }
     }
     if (current.length > 0) out.push(current);
 
-    const newParaText = out.join("\n");
-    const pieceStarts: number[] = [];
-    for (const m of newParaText.matchAll(/\S+/g)) {
-      pieceStarts.push(m.index);
+    const firstPiece =
+      wordFirstPiece[Math.min(wordIdx, wordFirstPiece.length - 1)] ?? 0;
+    const lastPiece =
+      (wordFirstPiece[wordIdx + 1] ?? pieceStarts.length) - 1;
+    let targetPiece = firstPiece;
+    let remaining = offInWord;
+    for (let p = firstPiece; p < lastPiece; p++) {
+      const pieceLen = pieces[p].text.length;
+      if (remaining <= pieceLen) break;
+      remaining -= pieceLen;
+      targetPiece = p + 1;
     }
-    const firstPiece = wordFirstPiece[Math.min(wordIdx, wordFirstPiece.length - 1)] ?? 0;
-    const pieceStart = pieceStarts[firstPiece] ?? newParaText.length;
+    // Anchor at the target piece's actual start (pieceStarts accounts for
+    // the line breaks inserted between pieces) plus the remaining offset.
+    const newParaEndAbs = paraStartAbs + out.join("\n").length;
     const newCursorAbs = Math.min(
-      paraStartAbs + pieceStart + offInWord,
-      paraStartAbs + newParaText.length,
+      (pieceStarts[targetPiece] ?? newParaEndAbs) + remaining,
+      newParaEndAbs,
     );
     this.replaceTextInBuffer(
       [...lines.slice(0, start), ...out, ...lines.slice(end + 1)].join("\n"),
