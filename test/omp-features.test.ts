@@ -315,3 +315,63 @@ test("backward selection decorates on the terminal-cursor path (OMP 18)", () => 
   // segment, so the inverted span includes the cursor char ("def").
   assert.ok(rendered.includes("\x1b[7mdef\x1b[27m"), rendered);
 });
+test("fo=t: mid-line edits never rewrap a fitting line", () => {
+  const { ed, keys } = makeEditor();
+  ed.render(60); // etw = 54
+  runEx(ed, keys, "set fo=t");
+  keys("i");
+  keys("aaaa bbbb cccc dddd eeee ffff gggg hhhh iiii jjjj kkkk ll mm");
+  assert.ok(ed.getLines().length > 1); // EOL typing wraps as usual
+  keys(`${ESC}0lll`); // mid-line (col 3) on the wrapped head
+  keys("iXX\x1b"); // mid-line insertion grows the overflow — no reflow
+  assert.equal(ed.getLines().length, 2);
+  assert.ok(ed.getText().includes("XX"));
+});
+
+test("fo=a (default) reflows the paragraph on mid-line edits", () => {
+  const { ed, keys } = makeEditor();
+  ed.render(60); // etw = 54
+  keys("aaaa bbbb cccc dddd eeee ffff gggg hhhh iiii jjjj kkkk ll mm");
+  keys(`${ESC}0`);
+  keys("iXX "); // mid-line insertion (with space) pushes the overflow
+  keys("\x1b");
+  const lines = ed.getLines();
+  assert.ok(lines.length > 1, JSON.stringify(lines));
+  for (const l of lines) {
+    assert.ok(visibleWidth(l) <= 54, JSON.stringify(lines));
+  }
+  const words = ed
+    .getText()
+    .split(/\s+/)
+    .filter(Boolean)
+    .sort()
+    .join("|");
+  assert.equal(
+    words,
+    ["XX", "aaaa", "bbbb", "cccc", "dddd", "eeee", "ffff", "gggg", "hhhh", "iiii", "jjjj", "kkkk", "ll", "mm"]
+      .sort()
+      .join("|"),
+  );
+});
+
+test("autowrap is fully disabled inside fenced code blocks", () => {
+  const { ed, keys } = makeEditor();
+  ed.render(60); // etw = 54, fo=at default
+  keys("```ts");
+  keys(`${ESC}o`);
+  keys("aaaa bbbb cccc dddd eeee ffff gggg hhhh iiii jjjj kkkk ll mm nn oo pp qq");
+  assert.equal(ed.getLines().length, 2); // fence line + unwrapped long line
+  keys(`${ESC}o`);
+  keys("```");
+  keys(`${ESC}o`);
+  keys("zz zz zz zz zz zz zz zz zz zz zz zz zz zz zz zz zz zz zz zz zz zz");
+  assert.ok(ed.getLines().length > 4, JSON.stringify(ed.getLines()));
+});
+
+test("formatoptions defaults to at and is queryable", () => {
+  const { ed, notes, keys } = makeEditor();
+  keys(`${ESC}:`);
+  keys("set fo?");
+  ed.handleInput("\r");
+  assert.ok(notes.includes("formatoptions=at"), JSON.stringify(notes));
+});

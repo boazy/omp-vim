@@ -472,7 +472,7 @@ export class ModalEditor extends CustomEditor {
   private visualReplacePending: boolean = false;
   private surround: SurroundState | null = null;
   private textWidth: number = 120;
-  private formatOptions: string = "t";
+  private formatOptions: string = "at";
   private effectiveTextWidth: number = 0;
   private lastRenderWidth: number | null = null;
   private lastCharMotion: LastCharMotion | null = null;
@@ -901,7 +901,7 @@ export class ModalEditor extends CustomEditor {
       }
       const printableInsertion = this.isPrintableChunk(data);
       super.handleInput(data);
-      if (printableInsertion) this.wrapCurrentLineIfNeeded();
+      if (printableInsertion) this.wrapAfterInsertion();
       return;
     }
 
@@ -1159,9 +1159,6 @@ export class ModalEditor extends CustomEditor {
   }
 
   private wrapCurrentLineIfNeeded(): void {
-    if (!this.formatOptions.includes("t") || this.effectiveTextWidth <= 0) {
-      return;
-    }
     for (let guard = 0; guard < 64; guard++) {
       const lines = this.getLines();
       const cursor = this.getCursor();
@@ -1217,10 +1214,164 @@ export class ModalEditor extends CustomEditor {
     }
   }
 
+  private wrapAfterInsertion(): void {
+    if (this.isInsideCodeFence()) return;
+    if (this.effectiveTextWidth <= 0) return;
+    if (!this.formatOptions.includes("t") && !this.formatOptions.includes("a")) {
+      return;
+    }
+    if (this.cursorDisplayCol() >= this.effectiveTextWidth) {
+      // The insertion point sits at/past the wrap margin: plain word wrap
+      // (both `t` and `a`; vim's cursor-crosses-the-margin behavior).
+      this.wrapCurrentLineIfNeeded();
+      return;
+    }
+    if (this.formatOptions.includes("a")) {
+      // Mid-line edit before the margin: paragraph reflow under `a` only.
+      this.reflowParagraphAroundCursor();
+    }
+  }
+
+  private cursorDisplayCol(): number {
+    const cursor = this.getCursor();
+    const line = this.getLines()[cursor.line] ?? "";
+    let displayCol = 0;
+    for (const g of getLineGraphemes(line)) {
+      if (g.start >= cursor.col) break;
+      displayCol += visibleWidth(line.slice(g.start, g.end));
+    }
+    return displayCol;
+  }
+
+  private isInsideCodeFence(): boolean {
+    const lines = this.getLines();
+    const cursor = this.getCursor();
+    let inside = false;
+    for (let i = 0; i < cursor.line; i++) {
+      if (/^\s*```/.test(lines[i] ?? "")) inside = !inside;
+    }
+    return inside || /^\s*```/.test(lines[cursor.line] ?? "");
+  }
+
+  private reflowParagraphAroundCursor(): void {
+    const lines = this.getLines();
+    const cursor = this.getCursor();
+    // Fence delimiters and fenced lines are hard barriers: a paragraph
+    // never spans across them, so code blocks are never reflowed.
+    const fenceOpen: boolean[] = [];
+    let open = false;
+    for (let i = 0; i < lines.length; i++) {
+      fenceOpen[i] = open;
+      if (/^\s*```/.test(lines[i] ?? "")) open = !open;
+    }
+    const isBarrier = (i: number): boolean =>
+      /^\s*```/.test(lines[i] ?? "") || fenceOpen[i] === true;
+    let start = cursor.line;
+    while (
+      start > 0 &&
+      (lines[start - 1] ?? "").trim().length > 0 &&
+      !isBarrier(start - 1)
+    ) {
+      start--;
+    }
+    let end = cursor.line;
+    while (
+      end < lines.length - 1 &&
+      (lines[end + 1] ?? "").trim().length > 0 &&
+      !isBarrier(end + 1)
+    ) {
+      end++;
+    }
+
+    const paraLines = lines.slice(start, end + 1);
+    const paraStartAbs = this.getAbsoluteIndex(start, 0);
+    const paraText = paraLines.join("\n");
+    const words: { word: string; start: number }[] = [];
+    for (const m of paraText.matchAll(/\S+/g)) {
+      words.push({ word: m[0], start: m.index });
+    }
+    if (words.length === 0) return;
+
+    // Reflow only when the paragraph actually overflows the width budget;
+    // otherwise whitespace typed mid-line (including trailing spaces) must
+    // be left untouched.
+    const overflows = paraLines.some(
+      (l) => visibleWidth(l) > this.effectiveTextWidth,
+    );
+    if (!overflows) return;
+
+    // Non-newline characters are preserved in order by the reflow, so the
+    // cursor maps by counting them on both sides.
+    const cursorAbs = this.getAbsoluteIndex(cursor.line, cursor.col);
+    const offInPara = Math.max(
+      0,
+      Math.min(cursorAbs - paraStartAbs, paraText.length),
+    );
+    let charsBeforeCursor = 0;
+    for (const ch of paraText.slice(0, offInPara)) {
+      if (ch !== "\n") charsBeforeCursor++;
+    }
+
+    // Greedy fill measured in display columns; words wider than the budget
+    // are hard-split at grapheme boundaries.
+    const pieces: string[] = [];
+    for (const { word } of words) {
+      if (visibleWidth(word) <= this.effectiveTextWidth) {
+        pieces.push(word);
+        continue;
+      }
+      let chunk = "";
+      let chunkWidth = 0;
+      for (const g of getLineGraphemes(word)) {
+        const gw = visibleWidth(word.slice(g.start, g.end));
+        if (chunkWidth + gw > this.effectiveTextWidth && chunk.length > 0) {
+          pieces.push(chunk);
+          chunk = "";
+          chunkWidth = 0;
+        }
+        chunk += word.slice(g.start, g.end);
+        chunkWidth += gw;
+      }
+      if (chunk.length > 0) pieces.push(chunk);
+    }
+
+    const out: string[] = [];
+    let current = "";
+    let currentWidth = 0;
+    for (const piece of pieces) {
+      const pieceWidth = visibleWidth(piece);
+      if (current.length === 0) {
+        current = piece;
+        currentWidth = pieceWidth;
+      } else if (currentWidth + 1 + pieceWidth <= this.effectiveTextWidth) {
+        current += " " + piece;
+        currentWidth += 1 + pieceWidth;
+      } else {
+        out.push(current);
+        current = piece;
+        currentWidth = pieceWidth;
+      }
+    }
+    if (current.length > 0) out.push(current);
+
+    const newParaText = out.join("\n");
+    let newOff = 0;
+    let i = 0;
+    while (i < newParaText.length && charsBeforeCursor > 0) {
+      if (newParaText[i] !== "\n") charsBeforeCursor--;
+      i++;
+    }
+    newOff = i;
+    this.replaceTextInBuffer(
+      [...lines.slice(0, start), ...out, ...lines.slice(end + 1)].join("\n"),
+      paraStartAbs + newOff,
+    );
+  }
+
   private applyExSet(body: string): void {
     if (body.length === 0) {
       this.notifyFn(
-        "Usage: set tw=N | set fo=t | set fo= | set tw? | set fo? | set etw?",
+        "Usage: set tw=N | set fo=at | set fo= | set tw? | set fo? | set etw?",
       );
       return;
     }
@@ -1274,18 +1425,23 @@ export class ModalEditor extends CustomEditor {
     }
 
     if (key === "fo" || key === "formatoptions") {
-      if ([...value].some((c) => c !== "t")) {
+      const allowed = [...value].filter((c) => c === "a" || c === "t");
+      if (value.length > 0 && allowed.length < value.length) {
         this.notifyFn(
-          "Only the t formatoptions flag is supported; others ignored",
+          "Only the a and t formatoptions flags are supported; others ignored",
         );
       }
-      const hasT = value.includes("t");
+      const flags = allowed.join("");
       if (op === "=") {
-        this.formatOptions = hasT ? "t" : "";
-      } else if (op === "+=" && hasT) {
-        this.formatOptions = "t";
-      } else if (op === "-=" && hasT) {
-        this.formatOptions = "";
+        this.formatOptions = flags;
+      } else if (op === "+=") {
+        for (const c of flags) {
+          if (!this.formatOptions.includes(c)) this.formatOptions += c;
+        }
+      } else if (op === "-=") {
+        this.formatOptions = [...this.formatOptions]
+          .filter((c) => !flags.includes(c))
+          .join("");
       }
       return;
     }

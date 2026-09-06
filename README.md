@@ -57,13 +57,18 @@ Targets/replacements: `( ) b`, `{ } B`, `[ ] r`, `< >`, `"`, `'`, `` ` ``. Openi
 
 ### Word wrapping
 
-Autowrap is on by default with `textwidth` (`tw`) 120, honoring only the `t` flag of `formatoptions` (`fo`) — set via the ex mini-mode:
+Autowrap is on by default with `textwidth` (`tw`) 120 and `formatoptions` (`fo`) `at` — set via the ex mini-mode:
 
 - `:set tw=80` / `:set textwidth=80` — set the wrap column (`0` disables).
-- `:set fo=t` / `:set fo=` / `:set fo+=t` / `:set fo-=t` — enable/disable autowrap (`t` is the only supported flag).
+- `:set fo=at` / `:set fo=` / `:set fo+=a` / `:set fo-=a` … — supported flags are `t` and `a` (others are ignored with a warning).
 - `:set tw?`, `:set fo?` — query values.
 - `:set etw?` — query the read-only `effectivetextwidth` (`etw`): the actual wrap width, `min(textwidth, prompt_width - 6)`, recomputed as the prompt widget resizes. When `etw` drops below 40 it is automatically forced to `0`, disabling autowrap on narrow prompts.
 
+Flag semantics:
+
+- `t` — wraps while you type **at/past the wrap margin** (the insertion point crosses `etw`). Mid-line edits on a fitting line never wrap; the line is allowed to exceed `etw`.
+- `a` — additionally **reflows the whole paragraph** (contiguous non-blank lines) when a mid-line edit pushes it past the margin: the paragraph is greedily re-filled to `etw` in display columns (wide chars and emoji never split), and whitespace at the reflow breaks is normalized. Enabled by default together with `t`.
+- Inside fenced code blocks (``` fences, with or without a language) autowrap is fully disabled — both flags — wherever the cursor is within the fence's line range, which is why `a` is safe to enable by default. Fence delimiters and fenced lines are also hard barriers: a paragraph reflow outside the fence never pulls fence lines or code-block content in.
 While typing in insert mode with autowrap enabled, the current line breaks at the last word boundary at or before `etw` (the break consumes one space, like vim). Wraps are undoable steps.
 
 ### Mode label
