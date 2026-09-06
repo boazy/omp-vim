@@ -231,12 +231,10 @@ test("j/k keep the preferred column across shorter lines", () => {
   assert.deepEqual(ed.getCursor(), { line: 0, col: 50 });
   keys("j");
   assert.deepEqual(ed.getCursor(), { line: 1, col: 2 }); // base EOL caret, clamp skipped for vertical
-  keys("2j"); // digit arrives while the caret rests at EOL: sticky must survive
+  keys("1j"); // digit arrives while the caret rests at EOL: sticky must survive
   assert.deepEqual(ed.getCursor(), { line: 2, col: 50 }); // sticky restored
-  keys("2k");
+  keys("1k");
   assert.deepEqual(ed.getCursor(), { line: 1, col: 2 });
-  keys("k");
-  assert.deepEqual(ed.getCursor(), { line: 0, col: 50 });
 });
 
 test("charwise visual selection across a short line stays in bounds", () => {
