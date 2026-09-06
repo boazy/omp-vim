@@ -71,8 +71,6 @@ const BRACKETED_PASTE_END = "\x1b[201~";
 const BRACKETED_PASTE_END_TAIL = BRACKETED_PASTE_END.slice(1);
 const MAX_COUNT = 9999;
 const PI_NATIVE_CLIPBOARD_TIMEOUT_MS = 5000;
-const SOFTWARE_CURSOR_START = "\x1b[7m";
-const SOFTWARE_CURSOR_RESETS = ["\x1b[0m", "\x1b[27m"] as const;
 const INSERT_CURSOR_SHAPE = "\x1b[5 q";
 const BLOCK_CURSOR_SHAPE = "\x1b[1 q";
 const RESET_CURSOR_SHAPE = "\x1b[0 q";
@@ -241,45 +239,6 @@ function enableCursorShapeSupport(tui: unknown): CursorShapeCleanup | null {
       runtime.setShowHardwareCursor(previousShowHardwareCursor);
     }
   };
-}
-
-function findSoftwareCursorReset(
-  line: string,
-  startIndex: number,
-): { index: number; sequence: (typeof SOFTWARE_CURSOR_RESETS)[number] } | null {
-  let firstReset: {
-    index: number;
-    sequence: (typeof SOFTWARE_CURSOR_RESETS)[number];
-  } | null = null;
-
-  for (const sequence of SOFTWARE_CURSOR_RESETS) {
-    const index = line.indexOf(sequence, startIndex);
-    if (index === -1) continue;
-    if (!firstReset || index < firstReset.index) {
-      firstReset = { index, sequence };
-    }
-  }
-
-  return firstReset;
-}
-
-function stripSoftwareCursorAfterMarker(line: string): string {
-  const markerIndex = line.indexOf(CURSOR_MARKER);
-  if (markerIndex === -1) return line;
-
-  const searchStart = markerIndex + CURSOR_MARKER.length;
-  const cursorStart = line.indexOf(SOFTWARE_CURSOR_START, searchStart);
-  if (cursorStart === -1) return line;
-
-  const cursorContentStart = cursorStart + SOFTWARE_CURSOR_START.length;
-  const reset = findSoftwareCursorReset(line, cursorContentStart);
-  if (!reset) return line;
-
-  return (
-    line.slice(0, cursorStart) +
-    line.slice(cursorContentStart, reset.index) +
-    line.slice(reset.index + reset.sequence.length)
-  );
 }
 
 type ClipboardCircuitBreaker = {
@@ -3741,16 +3700,6 @@ export class ModalEditor extends CustomEditor {
     return lines.some((line) => line.includes(CURSOR_MARKER));
   }
 
-  private stripSoftwareCursorWhenHardwareCursorIsUsed(lines: string[]): void {
-    for (let i = lines.length - 1; i >= 0; i--) {
-      const line = lines[i];
-      if (!line?.includes(CURSOR_MARKER)) continue;
-
-      lines[i] = stripSoftwareCursorAfterMarker(line);
-      return;
-    }
-  }
-
   private syncCursorShapeForRender(lines: string[]): void {
     if (!this.cursorShapeRuntime) return;
     if (!this.hasPromptCursorMarker(lines)) return;
@@ -3760,7 +3709,6 @@ export class ModalEditor extends CustomEditor {
       return;
     }
 
-    this.stripSoftwareCursorWhenHardwareCursorIsUsed(lines);
 
     const sequence = this.getDesiredCursorShapeSequence();
     if (sequence === this.lastCursorShapeSequence) return;
@@ -3808,10 +3756,13 @@ export class ModalEditor extends CustomEditor {
     const text = this.getText();
     const cursorPos = this.getCursor();
     const cursorLineText = this.getLines()[cursorPos.line] ?? "";
-    // The software-cursor glyph displaces a text char only when the cursor
-    // sits on one; an EOL caret renders after the last char (no split).
-    const cursorAbs =
-      cursorPos.col < cursorLineText.length
+    // OMP 18's terminal-cursor path keeps the cursor grapheme in the
+    // post-marker segment; only the software-cursor path displaces a char
+    // (an EOL caret renders after the last char in both cases).
+    const useTerminalCursor = this.getUseTerminalCursor();
+    const cursorAbs = useTerminalCursor
+      ? -1
+      : cursorPos.col < cursorLineText.length
         ? this.getAbsoluteIndex(cursorPos.line, cursorPos.col)
         : -1;
     const previous = this.decorateText;

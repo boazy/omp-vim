@@ -302,3 +302,16 @@ test("x after l on a wide-char line deletes the last grapheme", () => {
   keys(`${ESC}lx`);
   assert.equal(ed.getText(), "👍");
 });
+
+test("backward selection decorates on the terminal-cursor path (OMP 18)", () => {
+  const { ed, keys } = makeEditor();
+  ed.focused = true; // focused prompt: the pre/post-marker seam exists
+  ed.setUseTerminalCursor(true);
+  keys("abcdef");
+  keys(`${ESC}vhh`);
+  const lines = ed.render(44);
+  const rendered = lines.at(-1) ?? "";
+  // Terminal-cursor path: the cursor grapheme stays in the post-marker
+  // segment, so the inverted span includes the cursor char ("def").
+  assert.ok(rendered.includes("\x1b[7mdef\x1b[27m"), rendered);
+});
