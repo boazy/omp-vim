@@ -354,6 +354,60 @@ test("fo=a (default) reflows the paragraph on mid-line edits", () => {
   );
 });
 
+test("reflow keeps adjacent list items separate with hanging indentation", () => {
+  const { ed, keys } = makeEditor();
+  ed.render(60); // etw = 54
+  runEx(ed, keys, "set fo=");
+  const firstItem = "  - first item stays on its own line";
+  const secondBody = Array<string>(12).fill("second").join(" ");
+  ed.setText(`${firstItem}\n  2. ${secondBody}`);
+  runEx(ed, keys, "set fo=at");
+
+  keys("G$aX");
+  keys(ESC);
+
+  const lines = ed.getLines();
+  assert.equal(lines[0], firstItem);
+  assert.ok(lines.length > 2, JSON.stringify(lines));
+  assert.ok(lines[1]?.startsWith("  2. "), JSON.stringify(lines));
+  for (const line of lines.slice(2)) {
+    assert.match(line, /^ {5}\S/, JSON.stringify(lines));
+  }
+  assert.equal(
+    [
+      (lines[1] ?? "").slice("  2. ".length),
+      ...lines.slice(2).map((line) => line.slice("     ".length)),
+    ].join(" "),
+    `${secondBody}X`,
+  );
+  for (const line of lines) {
+    assert.ok(visibleWidth(line) <= 54, JSON.stringify(lines));
+  }
+});
+
+test("fo=t wraps bullet continuations at the list content indentation", () => {
+  const { ed, keys } = makeEditor();
+  ed.render(60); // etw = 54
+  runEx(ed, keys, "set fo=t");
+  keys("i");
+  const body = Array<string>(18).fill("alpha").join(" ");
+  keys(`  - ${body}`);
+
+  const lines = ed.getLines();
+  assert.ok(lines.length > 1, JSON.stringify(lines));
+  assert.ok(lines[0]?.startsWith("  - "), JSON.stringify(lines));
+  for (const line of lines.slice(1)) {
+    assert.match(line, /^ {4}\S/, JSON.stringify(lines));
+  }
+  assert.equal(
+    [
+      (lines[0] ?? "").slice("  - ".length),
+      ...lines.slice(1).map((line) => line.slice("    ".length)),
+    ].join(" "),
+    body,
+  );
+});
+
 test("autowrap is fully disabled inside fenced code blocks", () => {
   const { ed, keys } = makeEditor();
   ed.render(60); // etw = 54, fo=at default

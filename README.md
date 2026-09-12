@@ -69,6 +69,8 @@ Flag semantics:
 - `t` — wraps while you type **at/past the wrap margin** (the insertion point crosses `etw`). Mid-line edits on a fitting line never wrap; the line is allowed to exceed `etw`.
 - `a` — additionally **reflows the whole paragraph** (contiguous non-blank lines) when a mid-line edit pushes it past the margin: the paragraph is greedily re-filled to `etw` in display columns (wide chars and emoji never split), and whitespace at the reflow breaks is normalized. One exception: if the edited line itself is whitespace-free (a hard-split word mid-typing), the overflow is handled by the plain line break instead of the paragraph fill — refilling would re-parse the neighboring chunks as words and glue them with spaces. Enabled by default together with `t`.
 - Inside fenced code blocks (``` fences, with or without a language) autowrap is fully disabled — both flags — wherever the cursor is within the fence's line range, which is why `a` is safe to enable by default. Fence delimiters and fenced lines are also hard barriers: a paragraph reflow outside the fence never pulls fence lines or code-block content in.
+List item markers (`-`, `*`, `+`, `1.`, and `1)`) are paragraph boundaries. Reflow preserves the marker and uses a hanging indent for wrapped continuation lines.
+
 While typing in insert mode with autowrap enabled, the current line breaks at the last word boundary at or before `etw` (the break consumes one space, like vim). Wraps are undoable steps.
 
 ### Mode label

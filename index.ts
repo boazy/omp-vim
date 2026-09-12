@@ -86,6 +86,47 @@ const MODE_COLORS = {
   ex: "warning",
 } as const;
 const TOKEN = /^[A-Za-z][A-Za-z0-9_-]{0,63}$/;
+type ListItemPrefix = {
+  prefix: string;
+  continuationIndent: string;
+};
+
+type ListItemContext = ListItemPrefix & { line: number };
+
+function parseListItemPrefix(line: string): ListItemPrefix | null {
+  const match = /^([ \t]*)(?:[-+*]|\d+[.)])[ \t]+/.exec(line);
+  if (!match) return null;
+
+  const prefix = match[0];
+  const leadingIndent = match[1] ?? "";
+  return {
+    prefix,
+    continuationIndent:
+      leadingIndent +
+      " ".repeat(visibleWidth(prefix.slice(leadingIndent.length))),
+  };
+}
+
+function findContainingListItem(
+  lines: readonly string[],
+  fromLine: number,
+  barriers?: readonly boolean[],
+): ListItemContext | null {
+  for (let line = fromLine; line >= 0; line--) {
+    const text = lines[line] ?? "";
+    if (
+      text.trim().length === 0 ||
+      /^\s*```/.test(text) ||
+      barriers?.[line] === true
+    ) {
+      return null;
+    }
+
+    const item = parseListItemPrefix(text);
+    if (item) return { line, ...item };
+  }
+  return null;
+}
 
 type EditorSnapshot = {
   text: string;
@@ -1194,7 +1235,9 @@ export class ModalEditor extends CustomEditor {
 
       const breakChar = (graphemes[breakIdx] ?? { start: 0, end: 0 }).start;
       const head = line.slice(0, breakChar).replace(/[ \t]+$/, "");
-      const tail = line.slice(breakChar);
+      const listItem = findContainingListItem(lines, cursor.line);
+      const continuationIndent = listItem?.continuationIndent ?? "";
+      const tail = continuationIndent + line.slice(breakChar);
       const nextLines = [
         ...lines.slice(0, cursor.line),
         head,
@@ -1203,7 +1246,10 @@ export class ModalEditor extends CustomEditor {
       ];
       const nextCursor =
         cursor.col >= breakChar
-          ? { line: cursor.line + 1, col: cursor.col - breakChar }
+          ? {
+              line: cursor.line + 1,
+              col: continuationIndent.length + cursor.col - breakChar,
+            }
           : { line: cursor.line, col: Math.min(cursor.col, head.length) };
       let cursorAbs = 0;
       for (let i = 0; i < nextCursor.line; i++) {
@@ -1264,37 +1310,53 @@ export class ModalEditor extends CustomEditor {
     const cursor = this.getCursor();
     // Fence delimiters and fenced lines are hard barriers: a paragraph
     // never spans across them, so code blocks are never reflowed.
-    const fenceOpen: boolean[] = [];
+    const barrierLines: boolean[] = [];
     let open = false;
     for (let i = 0; i < lines.length; i++) {
-      fenceOpen[i] = open;
-      if (/^\s*```/.test(lines[i] ?? "")) open = !open;
+      const line = lines[i] ?? "";
+      barrierLines[i] = open || /^\s*```/.test(line);
+      if (/^\s*```/.test(line)) open = !open;
     }
-    const isBarrier = (i: number): boolean =>
-      /^\s*```/.test(lines[i] ?? "") || fenceOpen[i] === true;
-    let start = cursor.line;
-    while (
-      start > 0 &&
-      (lines[start - 1] ?? "").trim().length > 0 &&
-      !isBarrier(start - 1)
-    ) {
-      start--;
+
+    const listItem = findContainingListItem(lines, cursor.line, barrierLines);
+    let start = listItem?.line ?? cursor.line;
+    if (!listItem) {
+      while (
+        start > 0 &&
+        (lines[start - 1] ?? "").trim().length > 0 &&
+        barrierLines[start - 1] !== true &&
+        !parseListItemPrefix(lines[start - 1] ?? "")
+      ) {
+        start--;
+      }
     }
+
     let end = cursor.line;
     while (
       end < lines.length - 1 &&
       (lines[end + 1] ?? "").trim().length > 0 &&
-      !isBarrier(end + 1)
+      barrierLines[end + 1] !== true &&
+      !parseListItemPrefix(lines[end + 1] ?? "")
     ) {
       end++;
     }
 
     const paraLines = lines.slice(start, end + 1);
     const paraStartAbs = this.getAbsoluteIndex(start, 0);
-    const paraText = paraLines.join("\n");
-    const words: { word: string; start: number }[] = [];
-    for (const m of paraText.matchAll(/\S+/g)) {
-      words.push({ word: m[0], start: m.index });
+    const firstLinePrefix = listItem?.prefix ?? "";
+    const continuationIndent = listItem?.continuationIndent ?? "";
+    const words: { word: string; startAbs: number }[] = [];
+    for (let lineIndex = start; lineIndex <= end; lineIndex++) {
+      const line = lines[lineIndex] ?? "";
+      const contentStart = lineIndex === start ? firstLinePrefix.length : 0;
+      const lineStartAbs = this.getAbsoluteIndex(lineIndex, 0);
+      for (const match of line.matchAll(/\S+/g)) {
+        if (match.index < contentStart) continue;
+        words.push({
+          word: match[0],
+          startAbs: lineStartAbs + match.index,
+        });
+      }
     }
     if (words.length === 0) return;
 
@@ -1302,7 +1364,7 @@ export class ModalEditor extends CustomEditor {
     // otherwise whitespace typed mid-line (including trailing spaces) must
     // be left untouched.
     const overflows = paraLines.some(
-      (l) => visibleWidth(l) > this.effectiveTextWidth,
+      (line) => visibleWidth(line) > this.effectiveTextWidth,
     );
     if (!overflows) return;
     // A whitespace-free overflowing edited line is a hard-split word
@@ -1322,103 +1384,100 @@ export class ModalEditor extends CustomEditor {
     // word under the cursor (and the offset inside it) is whitespace-
     // immune — a count-based mapping drifts when earlier lines re-pack.
     const cursorAbs = this.getAbsoluteIndex(cursor.line, cursor.col);
-    const offInPara = Math.max(
-      0,
-      Math.min(cursorAbs - paraStartAbs, paraText.length),
-    );
     let wordIdx = 0;
     for (let i = 0; i < words.length; i++) {
-      if (offInPara >= (words[i] ?? { start: 0 }).start) wordIdx = i;
+      if (cursorAbs >= (words[i] ?? { startAbs: 0 }).startAbs) wordIdx = i;
     }
-    const anchorWord = words[wordIdx] ?? { word: "", start: 0 };
+    const anchorWord = words[wordIdx] ?? { word: "", startAbs: 0 };
     const offInWord = Math.max(
       0,
-      Math.min(offInPara - anchorWord.start, anchorWord.word.length),
+      Math.min(cursorAbs - anchorWord.startAbs, anchorWord.word.length),
     );
 
-    // Greedy fill measured in display columns; words wider than the budget
-    // are hard-split at grapheme boundaries.
-    // Piece model for the greedy fill: each piece carries `joinsPrev`,
-    // false when the piece starts a new word (separated by a space) and
-    // true when it is a hard-split continuation of the previous piece
-    // (appended with no separator, so split words stay whole). Words
-    // wider than the budget are hard-split at grapheme boundaries.
+    // Greedy fill measured in display columns; words wider than the content
+    // budget are hard-split at grapheme boundaries. List markers stay on the
+    // first line and continuation lines use a hanging indent.
+    const indentWidth = Math.max(
+      visibleWidth(firstLinePrefix),
+      visibleWidth(continuationIndent),
+    );
+    const contentWidth = Math.max(1, this.effectiveTextWidth - indentWidth);
     type Piece = { text: string; joinsPrev: boolean };
     const pieces: Piece[] = [];
     const wordFirstPiece: number[] = [];
     for (const { word } of words) {
       wordFirstPiece.push(pieces.length);
-      if (visibleWidth(word) <= this.effectiveTextWidth) {
+      if (visibleWidth(word) <= contentWidth) {
         pieces.push({ text: word, joinsPrev: false });
         continue;
       }
       let chunk = "";
       let chunkWidth = 0;
-      for (const g of getLineGraphemes(word)) {
-        const gw = visibleWidth(word.slice(g.start, g.end));
-        if (chunkWidth + gw > this.effectiveTextWidth && chunk.length > 0) {
+      for (const grapheme of getLineGraphemes(word)) {
+        const text = word.slice(grapheme.start, grapheme.end);
+        const width = visibleWidth(text);
+        if (chunkWidth + width > contentWidth && chunk.length > 0) {
           pieces.push({ text: chunk, joinsPrev: false });
           chunk = "";
           chunkWidth = 0;
         }
-        chunk += word.slice(g.start, g.end);
-        chunkWidth += gw;
+        chunk += text;
+        chunkWidth += width;
       }
       if (chunk.length > 0) pieces.push({ text: chunk, joinsPrev: false });
       for (
-        let p = wordFirstPiece[wordFirstPiece.length - 1] + 1;
-        p < pieces.length;
-        p++
+        let pieceIndex = (wordFirstPiece.at(-1) ?? 0) + 1;
+        pieceIndex < pieces.length;
+        pieceIndex++
       ) {
-        pieces[p].joinsPrev = true;
+        pieces[pieceIndex].joinsPrev = true;
       }
     }
 
     const out: string[] = [];
     const pieceStarts: number[] = [];
-    let current = "";
-    let currentWidth = 0;
+    let current = firstLinePrefix;
+    let currentWidth = visibleWidth(current);
+    let hasContent = false;
     let currentLineStartAbs = paraStartAbs;
     for (const piece of pieces) {
       const pieceWidth = visibleWidth(piece.text);
-      const separatorWidth = current.length === 0 || piece.joinsPrev ? 0 : 1;
+      const separator = hasContent && !piece.joinsPrev ? " " : "";
       if (
-        current.length === 0 ||
-        currentWidth + separatorWidth + pieceWidth <= this.effectiveTextWidth
+        !hasContent ||
+        currentWidth + visibleWidth(separator) + pieceWidth <=
+          this.effectiveTextWidth
       ) {
-        if (current.length === 0) {
-          pieceStarts.push(currentLineStartAbs);
-          current = piece.text;
-          currentWidth = pieceWidth;
-          continue;
-        }
-        pieceStarts.push(currentLineStartAbs + current.length + separatorWidth);
-        current += (piece.joinsPrev ? "" : " ") + piece.text;
-        currentWidth += separatorWidth + pieceWidth;
+        pieceStarts.push(
+          currentLineStartAbs + current.length + separator.length,
+        );
+        current += separator + piece.text;
+        currentWidth += visibleWidth(separator) + pieceWidth;
+        hasContent = true;
       } else {
         out.push(current);
         currentLineStartAbs += current.length + 1;
-        current = piece.text;
-        currentWidth = pieceWidth;
-        pieceStarts.push(currentLineStartAbs);
+        current = continuationIndent + piece.text;
+        currentWidth = visibleWidth(continuationIndent) + pieceWidth;
+        hasContent = true;
+        pieceStarts.push(currentLineStartAbs + continuationIndent.length);
       }
     }
-    if (current.length > 0) out.push(current);
+    out.push(current);
 
     const firstPiece =
       wordFirstPiece[Math.min(wordIdx, wordFirstPiece.length - 1)] ?? 0;
-    const lastPiece =
-      (wordFirstPiece[wordIdx + 1] ?? pieceStarts.length) - 1;
+    const lastPiece = (wordFirstPiece[wordIdx + 1] ?? pieceStarts.length) - 1;
     let targetPiece = firstPiece;
     let remaining = offInWord;
-    for (let p = firstPiece; p < lastPiece; p++) {
-      const pieceLen = pieces[p].text.length;
-      if (remaining <= pieceLen) break;
-      remaining -= pieceLen;
-      targetPiece = p + 1;
+    for (let pieceIndex = firstPiece; pieceIndex < lastPiece; pieceIndex++) {
+      const pieceLength = pieces[pieceIndex].text.length;
+      if (remaining <= pieceLength) break;
+      remaining -= pieceLength;
+      targetPiece = pieceIndex + 1;
     }
     // Anchor at the target piece's actual start (pieceStarts accounts for
-    // the line breaks inserted between pieces) plus the remaining offset.
+    // line breaks and hanging indents) plus the remaining offset.
     const newParaEndAbs = paraStartAbs + out.join("\n").length;
     const newCursorAbs = Math.min(
       (pieceStarts[targetPiece] ?? newParaEndAbs) + remaining,
